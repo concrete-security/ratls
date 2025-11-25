@@ -144,9 +144,13 @@ impl CaVerifier {
     fn new() -> Self {
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let inner = WebPkiServerVerifier::builder(Arc::new(root_store))
-            .build()
-            .expect("failed to build WebPkiServerVerifier");
+        let provider = get_crypto_provider();
+        let inner = WebPkiServerVerifier::builder_with_provider(
+            Arc::new(root_store),
+            provider,
+        )
+        .build()
+        .expect("failed to build WebPkiServerVerifier");
         Self {
             inner,
             last_cert: Arc::new(Mutex::new(None)),

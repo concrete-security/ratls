@@ -3,16 +3,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ratls_core::{ratls_connect, Policy};
 use tokio::net::TcpStream;
 
-fn live_enabled() -> bool {
-    std::env::var("RATLS_RUN_LIVE_TESTS").is_ok()
+fn install_crypto_provider() {
+    use rustls::crypto::CryptoProvider;
+    let _ = CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider());
 }
 
 #[tokio::test]
 async fn verify_live_tdx_quote() {
-    if !live_enabled() {
-        eprintln!("skipping live quote verification (set RATLS_RUN_LIVE_TESTS=1 to enable)");
-        return;
-    }
+    install_crypto_provider();
 
     let client = reqwest::Client::new();
     let resp = match client
@@ -64,10 +62,7 @@ async fn verify_live_tdx_quote() {
 
 #[tokio::test]
 async fn connect_to_vllm_with_ratls() {
-    if !live_enabled() {
-        eprintln!("skipping live proxy test (set RATLS_RUN_LIVE_TESTS=1 to enable)");
-        return;
-    }
+    install_crypto_provider();
 
     const HOST: &str = "vllm.concrete-security.com";
     let stream = TcpStream::connect((HOST, 443))
@@ -89,8 +84,20 @@ async fn connect_to_vllm_with_ratls() {
 
     let result = ratls_connect(stream, HOST, policy, None).await;
     assert!(
-        result.is_err(),
-        "connection to {HOST} unexpectedly succeeded without attestation error: {:?}",
+        result.is_ok(),
+        "connection to {HOST} failed: {:?}",
         result
+    );
+    let (_, attestation) = result.unwrap();
+    assert!(
+        attestation.trusted,
+        "attestation should be trusted, got: {:?}",
+        attestation
+    );
+    assert_eq!(
+        attestation.tee_type,
+        ratls_core::TeeType::Tdx,
+        "expected TDX tee type, got: {:?}",
+        attestation.tee_type
     );
 }
