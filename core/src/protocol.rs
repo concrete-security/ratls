@@ -7,23 +7,22 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-fn success_default_true() -> bool {
-    true
-}
-
 #[derive(Serialize)]
 struct AttestationRequest {
     report_data: String,
 }
 
 #[derive(Deserialize)]
-struct AttestationResponse {
-    #[serde(default = "success_default_true")]
-    success: bool,
-    quote: Option<DstackQuote>,
-    error: Option<String>,
-    #[serde(default)]
-    collateral: Option<QuoteCollateralV3>,
+#[serde(untagged)]
+enum AttestationResponse {
+    Success {
+        quote: DstackQuote,
+        #[serde(default)]
+        collateral: Option<QuoteCollateralV3>,
+    },
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -117,21 +116,17 @@ where
 
     let response: AttestationResponse = serde_json::from_slice(&body)
         .map_err(|e| RatlsError::Vendor(format!("Invalid server response: {e}")))?;
-    if !response.success {
-        let message = response
-            .error
-            .unwrap_or_else(|| "attestation server reported failure".into());
-        return Err(RatlsError::Vendor(message));
-    }
 
-    let dstack_quote = response
-        .quote
-        .ok_or_else(|| RatlsError::Vendor("missing quote payload".into()))?;
+    let (dstack_quote, response_collateral) = match response {
+        AttestationResponse::Success { quote, collateral } => (quote, collateral),
+        AttestationResponse::Error { error } => return Err(RatlsError::Vendor(error)),
+    };
+
     let quote_bytes = hex::decode(&dstack_quote.quote)
         .map_err(|e| RatlsError::Vendor(format!("Invalid quote hex: {e}")))?;
     let event_log = tdx::parse_event_log(dstack_quote.event_log)?;
 
-    let collateral = if let Some(collateral) = response.collateral {
+    let collateral = if let Some(collateral) = response_collateral {
         collateral
     } else if let Some(pccs) = policy.pccs_url.as_deref() {
         dcap_qvl::collateral::get_collateral(pccs, &quote_bytes)
