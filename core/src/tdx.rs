@@ -337,3 +337,74 @@ fn event_log_preview(s: &str) -> String {
     }
     snippet.replace('\n', "\\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_tls_cert_event(cert_hash_hex: &str) -> TcgEvent {
+        TcgEvent {
+            event_type: 0x80000001,
+            event: "New TLS Certificate".into(),
+            event_payload: hex::encode(cert_hash_hex.as_bytes()),
+            digest: "00".repeat(48),
+            imr: 2,
+        }
+    }
+
+    #[test]
+    fn verify_tls_certificate_binding_success() {
+        let cert_data = b"test certificate data";
+        let cert_hash = hex::encode(Sha256::digest(cert_data));
+
+        let events = vec![make_tls_cert_event(&cert_hash)];
+        let result = verify_tls_certificate_in_log(&events, cert_data);
+
+        assert!(result.is_ok(), "should pass when cert hash matches: {result:?}");
+    }
+
+    #[test]
+    fn verify_tls_certificate_binding_wrong_cert() {
+        let cert_data = b"real certificate";
+        let wrong_hash = hex::encode(Sha256::digest(b"different certificate"));
+
+        let events = vec![make_tls_cert_event(&wrong_hash)];
+        let result = verify_tls_certificate_in_log(&events, cert_data);
+
+        assert!(result.is_err(), "should fail when cert hash doesn't match");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("missing from event log"), "error: {err}");
+    }
+
+    #[test]
+    fn verify_tls_certificate_binding_missing_event() {
+        let cert_data = b"test certificate";
+        let events = vec![TcgEvent {
+            event_type: 0x1,
+            event: "Some Other Event".into(),
+            event_payload: "".into(),
+            digest: "00".repeat(48),
+            imr: 0,
+        }];
+
+        let result = verify_tls_certificate_in_log(&events, cert_data);
+
+        assert!(result.is_err(), "should fail when TLS cert event is missing");
+    }
+
+    #[test]
+    fn verify_tls_certificate_uses_latest_event() {
+        let cert_data = b"final certificate";
+        let old_hash = hex::encode(Sha256::digest(b"old certificate"));
+        let new_hash = hex::encode(Sha256::digest(cert_data));
+
+        // Multiple TLS cert events - should use the last one
+        let events = vec![
+            make_tls_cert_event(&old_hash),
+            make_tls_cert_event(&new_hash),
+        ];
+        let result = verify_tls_certificate_in_log(&events, cert_data);
+
+        assert!(result.is_ok(), "should use latest TLS cert event: {result:?}");
+    }
+}

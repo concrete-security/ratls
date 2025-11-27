@@ -144,13 +144,14 @@ impl CaVerifier {
     fn new() -> Self {
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        Self::with_roots(root_store)
+    }
+
+    fn with_roots(root_store: RootCertStore) -> Self {
         let provider = get_crypto_provider();
-        let inner = WebPkiServerVerifier::builder_with_provider(
-            Arc::new(root_store),
-            provider,
-        )
-        .build()
-        .expect("failed to build WebPkiServerVerifier");
+        let inner = WebPkiServerVerifier::builder_with_provider(Arc::new(root_store), provider)
+            .build()
+            .expect("failed to build WebPkiServerVerifier");
         Self {
             inner,
             last_cert: Arc::new(Mutex::new(None)),
@@ -206,8 +207,8 @@ fn get_crypto_provider() -> Arc<CryptoProvider> {
     Arc::new(aws_lc_rs::default_provider())
 }
 
-fn build_client_config(
-    verifier: Arc<CaVerifier>,
+fn build_client_config<V: ServerCertVerifier + 'static>(
+    verifier: Arc<V>,
     alpn: Option<Vec<String>>,
 ) -> Arc<ClientConfig> {
     let provider = get_crypto_provider();
@@ -288,162 +289,75 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType};
+    use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, IsCa, BasicConstraints};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use x509_parser::prelude::{FromDer, X509Certificate};
 
-    fn spki_from_cert(cert_der: &[u8]) -> Result<Vec<u8>, RatlsError> {
-        let (_, cert) =
-            X509Certificate::from_der(cert_der).map_err(|e| RatlsError::X509(format!("{e:?}")))?;
-        Ok(cert.public_key().raw.to_vec())
-    }
-
-    #[test]
-    fn spki_extraction() {
-        let mut params = CertificateParams::new(vec!["example.com".into()]);
-        params.distinguished_name = DistinguishedName::new();
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "example.com");
-        let cert = Certificate::from_params(params).unwrap();
-        let cert_der = cert.serialize_der().unwrap();
-        let spki = spki_from_cert(&cert_der).unwrap();
-        assert!(!spki.is_empty());
-    }
-
-    /// Test verifier that trusts a specific root and records the leaf cert.
-    #[derive(Debug)]
-    struct TestCaVerifier {
-        inner: Arc<WebPkiServerVerifier>,
-        last_cert: Arc<Mutex<Option<Vec<u8>>>>,
-    }
-
-    impl TestCaVerifier {
-        fn new(root_cert_der: &[u8], provider: Arc<CryptoProvider>) -> Self {
-            let mut root_store = RootCertStore::empty();
-            root_store
-                .add(CertificateDer::from(root_cert_der.to_vec()))
-                .expect("failed to add root cert");
-            let inner = WebPkiServerVerifier::builder_with_provider(
-                Arc::new(root_store),
-                provider,
-            )
-            .build()
-            .expect("failed to build WebPkiServerVerifier");
-            Self {
-                inner,
-                last_cert: Arc::new(Mutex::new(None)),
-            }
-        }
-
-        fn take_cert(&self) -> Option<Vec<u8>> {
-            self.last_cert.lock().ok()?.take()
-        }
-    }
-
-    impl ServerCertVerifier for TestCaVerifier {
-        fn verify_server_cert(
-            &self,
-            end_entity: &CertificateDer<'_>,
-            intermediates: &[CertificateDer<'_>],
-            server_name: &ServerName<'_>,
-            ocsp_response: &[u8],
-            now: UnixTime,
-        ) -> Result<ServerCertVerified, RustlsError> {
-            self.inner
-                .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)?;
-            if let Ok(mut guard) = self.last_cert.lock() {
-                *guard = Some(end_entity.to_vec());
-            }
-            Ok(ServerCertVerified::assertion())
-        }
-
-        fn verify_tls12_signature(
-            &self,
-            message: &[u8],
-            cert: &CertificateDer<'_>,
-            dss: &DigitallySignedStruct,
-        ) -> Result<HandshakeSignatureValid, RustlsError> {
-            self.inner.verify_tls12_signature(message, cert, dss)
-        }
-
-        fn verify_tls13_signature(
-            &self,
-            message: &[u8],
-            cert: &CertificateDer<'_>,
-            dss: &DigitallySignedStruct,
-        ) -> Result<HandshakeSignatureValid, RustlsError> {
-            self.inner.verify_tls13_signature(message, cert, dss)
-        }
-
-        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-            self.inner.supported_verify_schemes()
-        }
-    }
-
-    #[tokio::test]
-    async fn ca_verifier_records_cert() {
-        let provider = get_crypto_provider();
-
-        // Create a self-signed CA certificate
+    /// Helper to create a test CA and server certificate pair.
+    fn create_test_certs() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        // CA certificate
         let mut ca_params = CertificateParams::new(vec!["localhost".into()]);
         ca_params.distinguished_name = DistinguishedName::new();
         ca_params.distinguished_name.push(DnType::CommonName, "Test CA");
-        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        let ca_cert = Certificate::from_params(ca_params).unwrap();
-        let ca_cert_der = ca_cert.serialize_der().unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca = Certificate::from_params(ca_params).unwrap();
+        let ca_der = ca.serialize_der().unwrap();
 
-        // Create server certificate signed by our CA
-        let mut server_params = CertificateParams::new(vec!["localhost".into()]);
-        server_params.distinguished_name = DistinguishedName::new();
-        server_params.distinguished_name.push(DnType::CommonName, "localhost");
-        let server_cert = Certificate::from_params(server_params).unwrap();
-        let server_cert_der = server_cert.serialize_der_with_signer(&ca_cert).unwrap();
-        let server_key_der = server_cert.serialize_private_key_der();
+        // Server certificate signed by CA
+        let mut srv_params = CertificateParams::new(vec!["localhost".into()]);
+        srv_params.distinguished_name = DistinguishedName::new();
+        srv_params.distinguished_name.push(DnType::CommonName, "localhost");
+        let srv = Certificate::from_params(srv_params).unwrap();
+        let srv_der = srv.serialize_der_with_signer(&ca).unwrap();
+        let srv_key = srv.serialize_private_key_der();
 
-        // Build verifier that trusts our test CA
-        let verifier = Arc::new(TestCaVerifier::new(&ca_cert_der, provider.clone()));
-        let config = {
-            let mut cfg = ClientConfig::builder_with_provider(provider.clone())
-                .with_safe_default_protocol_versions()
-                .expect("protocol versions")
-                .dangerous()
-                .with_custom_certificate_verifier(verifier.clone())
-                .with_no_client_auth();
-            cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-            Arc::new(cfg)
-        };
+        (ca_der, srv_der, srv_key)
+    }
+
+    #[tokio::test]
+    async fn tls_handshake_records_server_cert() {
+        let (ca_der, srv_der, srv_key) = create_test_certs();
+
+        // Client: trust our test CA
+        let mut root_store = RootCertStore::empty();
+        root_store.add(CertificateDer::from(ca_der)).unwrap();
+        let verifier = Arc::new(CaVerifier::with_roots(root_store));
+        let config = build_client_config(verifier.clone(), Some(vec!["http/1.1".into()]));
         let connector = TlsConnector::from(config);
 
-        // Build server with the signed certificate
-        let cert = CertificateDer::from(server_cert_der.clone());
-        let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(server_key_der));
-        let server_config = rustls::ServerConfig::builder_with_provider(provider)
+        // Server: use test certificate
+        let server_config = rustls::ServerConfig::builder_with_provider(get_crypto_provider())
             .with_safe_default_protocol_versions()
-            .expect("protocol versions")
+            .unwrap()
             .with_no_client_auth()
-            .with_single_cert(vec![cert], key)
+            .with_single_cert(
+                vec![CertificateDer::from(srv_der.clone())],
+                PrivateKeyDer::from(PrivatePkcs8KeyDer::from(srv_key)),
+            )
             .unwrap();
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+
+        // Spawn server
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut tls = acceptor.accept(stream).await.unwrap();
-            AsyncWriteExt::write_all(&mut tls, b"hi").await.unwrap();
+            tls.write_all(b"ok").await.unwrap();
         });
 
-        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // Client connects and reads
+        let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let mut tls = connector
-            .connect(ServerName::try_from("localhost").unwrap(), client_stream)
+            .connect(ServerName::try_from("localhost").unwrap(), stream)
             .await
             .unwrap();
         let mut buf = [0u8; 2];
-        AsyncReadExt::read_exact(&mut tls, &mut buf).await.unwrap();
+        tls.read_exact(&mut buf).await.unwrap();
         server.await.unwrap();
 
-        let recorded = verifier.take_cert().expect("should have recorded cert");
-        assert_eq!(recorded, server_cert_der);
+        // Verify the certificate was recorded
+        let recorded = verifier.take_cert().expect("certificate should be recorded");
+        assert_eq!(recorded, srv_der);
     }
 }
