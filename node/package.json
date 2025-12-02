@@ -7,7 +7,7 @@
   "types": "./index.d.ts",
   "exports": {
     ".": {
-      "types": "./index.d.ts",
+      "types": "./ratls-fetch.d.ts",
       "import": "./ratls-fetch.js",
       "require": "./ratls-fetch.js"
     },

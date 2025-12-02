@@ -74,6 +74,32 @@ try {
     }
   })
   
+  test("Low-level bindings available from binding export", async () => {
+    const bindingExports = await import("./index.js")
+    if (typeof bindingExports.httpRequest !== "function") {
+      throw new Error("httpRequest not exported from index.js")
+    }
+    if (typeof bindingExports.httpStreamRequest !== "function") {
+      throw new Error("httpStreamRequest not exported from index.js")
+    }
+    if (typeof bindingExports.streamRead !== "function") {
+      throw new Error("streamRead not exported from index.js")
+    }
+    if (typeof bindingExports.streamClose !== "function") {
+      throw new Error("streamClose not exported from index.js")
+    }
+  })
+  
+  test("Main entry point only exports high-level API", async () => {
+    const mainExports = await import("./ratls-fetch.js")
+    if (typeof mainExports.createRatlsFetch !== "function") {
+      throw new Error("createRatlsFetch not exported from ratls-fetch.js")
+    }
+    if (typeof mainExports.httpRequest === "function") {
+      throw new Error("httpRequest should not be exported from main entry point - use 'ratls-node/binding' instead")
+    }
+  })
+  
   console.log(`\n✅ Tests passed: ${testsPassed}`)
   if (testsFailed > 0) {
     console.error(`❌ Tests failed: ${testsFailed}`)

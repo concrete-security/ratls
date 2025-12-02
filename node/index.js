@@ -51,4 +51,7 @@ function resolveCandidate() {
 const binding = require(resolveCandidate())
 export default binding
 export const httpRequest = binding.http_request || binding.httpRequest
+export const httpStreamRequest = binding.http_stream_request || binding.httpStreamRequest
+export const streamRead = binding.stream_read || binding.streamRead
+export const streamClose = binding.stream_close || binding.streamClose
 export const exportsMap = binding
