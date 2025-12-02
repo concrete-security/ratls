@@ -1,0 +1,53 @@
+{
+  "name": "ratls-node",
+  "version": "0.1.0",
+  "description": "RA-TLS client for Node.js - attested fetch for Trusted Execution Environments",
+  "type": "module",
+  "main": "./ratls-fetch.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./ratls-fetch.d.ts",
+      "import": "./ratls-fetch.js",
+      "require": "./ratls-fetch.js"
+    },
+    "./binding": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "ratls-fetch.js"
+  ],
+  "keywords": [
+    "ratls",
+    "tee",
+    "tdx",
+    "sgx",
+    "attestation",
+    "confidential-computing",
+    "fetch",
+    "tls"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zama-ai/secure-chat",
+    "directory": "frontend/ratls/node"
+  },
+  "license": "MIT",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "@ai-sdk/openai": "^2.0.76",
+    "ai": "^5.0.106",
+    "ws": "^8.18.3",
+    "zod": "^4.1.13"
+  }
+}
