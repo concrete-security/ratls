@@ -1,0 +1,12 @@
+[workspace]
+members = ["core"]
+resolver = "2"
+
+[workspace.dependencies]
+serde = "1"
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+hex = "0.4"
+dcap-qvl = "0.3.4"
+
