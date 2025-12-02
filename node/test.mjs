@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { createRatlsFetch } from "./ratls-fetch.js"
 import binding from "./index.js"
 
@@ -26,7 +24,7 @@ try {
   
   test("Native binding loads", () => {
     if (!binding) throw new Error("Binding not loaded")
-    if (typeof binding.httpRequest !== "function" && typeof binding.http_request !== "function") {
+    if (typeof binding.httpRequest !== "function") {
       throw new Error("httpRequest function not available")
     }
   })
@@ -65,10 +63,10 @@ try {
   })
   
   test("Streaming API available", () => {
-    const hasStreaming = 
-      (typeof binding.httpStreamRequest === "function" || typeof binding.http_stream_request === "function") &&
-      (typeof binding.streamRead === "function" || typeof binding.stream_read === "function") &&
-      (typeof binding.streamClose === "function" || typeof binding.stream_close === "function")
+    const hasStreaming =
+      typeof binding.httpStreamRequest === "function" &&
+      typeof binding.streamRead === "function" &&
+      typeof binding.streamClose === "function"
     if (!hasStreaming) {
       console.log("  (Streaming API not available, using buffered mode)")
     }

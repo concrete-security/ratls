@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * RA-TLS Demo with AI SDK
  *
@@ -63,8 +62,7 @@ const { textStream, response } = await streamText({
 })
 
 process.stdout.write("\nResponse: ")
-for await (const delta of textStream) {
-  const text = typeof delta === "string" ? delta : delta?.textDelta ?? delta?.value ?? ""
+for await (const text of textStream) {
   process.stdout.write(text)
 }
 

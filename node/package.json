@@ -20,7 +20,8 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "ratls-fetch.js"
+    "ratls-fetch.js",
+    "ratls-fetch.d.ts"
   ],
   "keywords": [
     "ratls",
