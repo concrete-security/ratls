@@ -1,6 +1,6 @@
 # RA-TLS Toolkit
 
-Portable Remote Attestation for the modern web. This toolkit delivers verified TLS connections to TEEs from browsers (via WASM), Node.js, and Python without relying on platform-native attestation stacks.
+Portable Remote Attestation for the modern web. This toolkit delivers verified TLS connections to TEEs from browsers (via WASM) without relying on platform-native attestation stacks.
 
 ---
 
@@ -8,59 +8,18 @@ Portable Remote Attestation for the modern web. This toolkit delivers verified T
 
 ## Key Features
 - Browser-first verification: full attestation performed inside WASM.
-- Transport agnostic: direct TCP for Node/Python, WebSocket/WebTransport tunnel for browsers.
 - Configurable policy engine: enforce TCB levels, measurements, advisory IDs.
 - Supported TEEs: Intel TDX today; AMD SEV-SNP planned.
-
-## Quickstart Demo
-
-**Prerequisites**
-- Rust (stable toolchain)
-- `wasm-pack` (`cargo install wasm-pack`)
-- Python 3 (serving static assets)
-- LLVM/Clang with `wasm32` support
-
-**Run the live demo**
-```bash
-make demo
-```
-1. Visit `http://localhost:8080/web-check/`.
-2. Confirm the pre-filled target (sample TDX endpoint).
-3. Click **Run attestation check**.
-4. The browser opens a WebSocket to the proxy, tunnels TLS to the TEE, requests a quote, and verifies it locally.
 
 ---
 
 # 2. Architecture & Data Flow
 
-Browsers lack raw TCP sockets and attestation primitives. The toolkit uses a **Tunnel-and-Verify** approach to work around both limitations.
+Browsers lack raw TCP sockets and attestation primitives. The toolkit uses WebSocket/WebTransport tunnels to work around these limitations.
 
-### Data Path
-
-```mermaid
-graph LR
-    A[Browser (WASM)] -- WebSocket (Encrypted TLS) --> B[Local Proxy]
-    B -- Raw TCP (Still Encrypted) --> C[TEE Server]
-
-    subgraph "Browser Context"
-        A
-        D[Core Verifier]
-    end
-
-    subgraph "Untrusted Host"
-        B
-    end
-
-    subgraph "Trusted Enclave"
-        C
-    end
-```
-
-1. **Tunnel:** Browser connects to the proxy via WebSocket.
-2. **Forward:** Proxy opens TCP to the target and blindly forwards bytes; TLS stays end-to-end.
-3. **Handshake:** WASM client completes TLS 1.3 over the tunnel.
-4. **Quote Fetch:** Client issues an HTTP request inside the tunnel to fetch the hardware quote.
-5. **Verification:** `ratls-core` validates the quote against the TLS certificate and user policy.
+1. **Handshake:** WASM client completes TLS 1.3 over a WebSocket connection.
+2. **Quote Fetch:** Client issues an HTTP request to fetch the hardware quote.
+3. **Verification:** `ratls-core` validates the quote against the TLS certificate and user policy.
 
 ---
 
@@ -75,18 +34,15 @@ graph LR
 - `WasmWsStream`: Wraps browser `WebSocket` into `AsyncRead + AsyncWrite` for `rustls`.
 - `run_attestation_check(...)`: Diagnostics helper.
 - `httpRequest(...)`: HTTP/1.1 over RA-TLS with streaming bodies.
-- `ratls-fetch.js`: Fetch-compatible shim you can hand to AI SDKs for chat streaming.
-- `wasm/examples/ai-sdk-openai-demo.mjs`: Simple streaming test against `vllm.concrete-security.com` using `@ai-sdk/openai` + the RA-TLS fetch (requires `@ai-sdk/openai`, `ai`, `ws`, and `zod@^4`).
 
 Example:
 ```javascript
 import init, { httpRequest } from "ratls-wasm";
-import { createRatlsFetch } from "ratls-wasm/ratls-fetch.js";
 
 await init();
 
 const ratlsResponse = await httpRequest(
-  "ws://localhost:9000?target=secure-enclave.com:443",
+  "ws://secure-enclave.com:443",
   "secure-enclave.com",
   "secure-enclave.com",
   "GET",
@@ -96,46 +52,15 @@ const ratlsResponse = await httpRequest(
 );
 // Stream the body with await ratlsResponse.readChunk() until empty
 // ratlsResponse.attestation() returns the attestation result
-
-const ratlsFetch = createRatlsFetch({
-  proxyUrl: "ws://localhost:9000",
-  targetHost: "secure-enclave.com:443",
-});
-// pass ratlsFetch where a standard fetch is expected
 ```
 
-## `proxy/`
-- Listens on WebSocket/WebTransport.
-- Reads `?target=host:port`.
-- Opens TCP and shuttles bytes bi-directionally.
-- Must enforce allowlists/ACLs in production to guard against SSRF.
-- Configuration is driven via environment variables (see `proxy/README.md` for detail):
-  - `RATLS_PROXY_LISTEN` (default `127.0.0.1:9000`)
-  - `RATLS_PROXY_TARGET` (default `127.0.0.1:8443`)
-  - `RATLS_PROXY_ALLOWLIST` (required, comma-separated host:port list; the proxy refuses to start when empty). Set this to cover both the default target and any values you expect to pass via `?target=...`.
-- Always run the proxy with an allowlist that matches the enclave endpoints you plan to reach; otherwise requests will be rejected before the TLS tunnel is established.
-
-## Node bindings (direct TCP)
-- `node/` contains the napi-rs binding that talks RA-TLS over TCP without the WebSocket proxy.
-- Two public entry points exist today: `http_request(...)` (buffered body) and `http_stream_request(...)` (true streaming) along with the `createRatlsFetch` shim that attaches attestation to `response.ratlsAttestation` and an `x-ratls-attestation` header.
-- Build and exercise the binding locally:
-  ```bash
-  rustup override set 1.88.0   # or newer toolchain
-  cargo build -p ratls-node --release
-  pnpm add -D @ai-sdk/openai ai ws zod@^4
-  node node/examples/ai-sdk-openai-demo.mjs "Hello from RA-TLS"
-  ```
-- When the native module is built, `node/index.js` loads `target/release/ratls_node.node` automatically (override via `RATLS_NODE_BINARY` if you stash the binary elsewhere). See `node/README.md` for API docs and the AI SDK integration walkthrough.
-
 ## Additional Directories
-- `node/`: NAPI bindings that talk TCP directly with optional tunnel fallback.
 - `python/`: PyO3 bindings with async helpers.
 - `server-examples/`: Reference RA-TLS servers for TDX/SNP (coming soon).
 - `docs/`: Design notes, specs, and task tracking.
 
 ## Binding status
-- WASM: functional; provides `RatlsClient`, `httpRequest`, and the fetch shim used by the browser demo plus `wasm/examples/ai-sdk-openai-demo.mjs`.
-- Node: functional; direct TCP plus fetch shim, see section above.
+- WASM: functional; provides `RatlsClient` and `httpRequest`.
 - Python: scaffolding in progress (`python/README.md`) with planned async API parity once the core pieces stabilize.
 
 ---
@@ -224,22 +149,15 @@ Server responds:
 ## Directory Structure
 - `core/`: Verification + policy.
 - `wasm/`: Browser bindings.
-- `proxy/`: Tunnel service.
 - `server-examples/`: Forthcoming reference TEEs.
 
 ## Build Commands
 
 | Command | Description |
 | --- | --- |
-| `make test` | Run Rust unit tests for core and proxy. |
-| `make test-node` | Build `ratls-node`, install AI SDK deps via pnpm, and run the streaming smoke test against `vllm.concrete-security.com`. |
+| `make test` | Run Rust unit tests for core. |
 | `make test-wasm` | Check build for the `wasm32` target. |
 | `make build-wasm` | Compile the WASM package into `pkg/`. |
-| `make proxy` | Run the proxy server standalone. |
-| `make web-check` | Serve the static WASM test harness. |
-| `make demo` | Build WASM and run proxy + web harness together. |
-
-Set `RUN_WASM_AI_SDK=1` when invoking `make test-wasm` to build the bindings and launch the WASM AI SDK smoke test (requires the proxy to be running in another shell).
 
 ## Troubleshooting WASM Builds
 - Errors like `rust-lld: error: unknown file type` typically mean LLVM/Clang lacks `wasm32` support.
