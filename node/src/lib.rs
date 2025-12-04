@@ -28,9 +28,12 @@ pub struct HeaderEntry {
 #[napi(object)]
 pub struct JsAttestation {
     pub trusted: bool,
+    #[napi(js_name = "teeType")]
     pub tee_type: String,
     pub measurement: Option<String>,
+    #[napi(js_name = "tcbStatus")]
     pub tcb_status: String,
+    #[napi(js_name = "advisoryIds")]
     pub advisory_ids: Vec<String>,
 }
 
@@ -50,6 +53,7 @@ impl From<AttestationResult> for JsAttestation {
 pub struct JsHttpResponse {
     pub attestation: JsAttestation,
     pub status: u16,
+    #[napi(js_name = "statusText")]
     pub status_text: String,
     pub headers: Vec<HeaderEntry>,
     pub body: Buffer,
@@ -59,8 +63,10 @@ pub struct JsHttpResponse {
 pub struct JsStreamingResponse {
     pub attestation: JsAttestation,
     pub status: u16,
+    #[napi(js_name = "statusText")]
     pub status_text: String,
     pub headers: Vec<HeaderEntry>,
+    #[napi(js_name = "streamId")]
     pub stream_id: u32,
 }
 
@@ -81,7 +87,6 @@ async fn connect_helper(
     TokioIo<ratls_core::platform::TlsStream<TcpStream>>,
     AttestationResult,
 )> {
-    // Use async DNS resolution instead of blocking to_socket_addrs
     let tcp_addr = lookup_host(&target_host)
         .await
         .map_err(|err| Error::from_reason(format!("invalid target host: {err}")))?
@@ -178,9 +183,7 @@ async fn dispatch_request(
         .map_err(|e| Error::from_reason(format!("HTTP handshake failed: {e}")))?;
 
     task::spawn(async move {
-        if let Err(e) = conn.await {
-            eprintln!("Connection failed: {:?}", e);
-        }
+        let _ = conn.await;
     });
 
     let res = sender
@@ -205,7 +208,7 @@ fn extract_response_meta<B>(res: &Response<B>) -> (u16, String, Vec<HeaderEntry>
     (status, status_text, headers)
 }
 
-#[napi]
+#[napi(js_name = "httpRequest")]
 pub async fn http_request(
     target_host: String,
     server_name: String,
@@ -251,21 +254,12 @@ static STREAM_ID: AtomicU32 = AtomicU32::new(1);
 async fn cleanup_idle_streams() {
     let mut guard = STREAMS.lock().await;
     let now = Instant::now();
-    guard.retain(|stream_id, state| {
-        let idle_duration = now.duration_since(state.last_accessed);
-        if idle_duration > STREAM_IDLE_TIMEOUT {
-            eprintln!(
-                "Cleaning up idle stream {} (idle for {:?})",
-                stream_id, idle_duration
-            );
-            false
-        } else {
-            true
-        }
+    guard.retain(|_stream_id, state| {
+        now.duration_since(state.last_accessed) <= STREAM_IDLE_TIMEOUT
     });
 }
 
-#[napi]
+#[napi(js_name = "httpStreamRequest")]
 pub async fn http_stream_request(
     target_host: String,
     server_name: String,
@@ -301,7 +295,6 @@ pub async fn http_stream_request(
         },
     );
 
-    // Spawn cleanup task periodically
     task::spawn(async {
         tokio::time::sleep(STREAM_IDLE_TIMEOUT).await;
         cleanup_idle_streams().await;
@@ -316,7 +309,7 @@ pub async fn http_stream_request(
     })
 }
 
-#[napi]
+#[napi(js_name = "streamRead")]
 pub async fn stream_read(stream_id: u32, max_bytes: Option<u32>) -> napi::Result<Buffer> {
     let limit = max_bytes.unwrap_or(8192).max(1) as usize;
     let mut guard = STREAMS.lock().await;
@@ -324,7 +317,6 @@ pub async fn stream_read(stream_id: u32, max_bytes: Option<u32>) -> napi::Result
         return Ok(Buffer::from(Vec::new()));
     };
 
-    // Update last accessed time to prevent idle cleanup
     state.last_accessed = Instant::now();
 
     if !state.pending.is_empty() {
@@ -358,7 +350,7 @@ pub async fn stream_read(stream_id: u32, max_bytes: Option<u32>) -> napi::Result
     }
 }
 
-#[napi]
+#[napi(js_name = "streamClose")]
 pub async fn stream_close(stream_id: u32) -> napi::Result<()> {
     let mut guard = STREAMS.lock().await;
     guard.remove(&stream_id);

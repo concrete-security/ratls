@@ -17,15 +17,14 @@
  * ```
  */
 
-import binding from "./index.js"
+import {
+  httpRequest,
+  httpStreamRequest,
+  streamRead,
+  streamClose,
+} from "./index.js"
 
 const ATTESTATION_HEADER = "x-ratls-attestation"
-
-// Resolve binding functions (handle both snake_case and camelCase exports)
-const httpRequest = binding.http_request || binding.httpRequest
-const streamRequest = binding.http_stream_request || binding.httpStreamRequest
-const streamRead = binding.stream_read || binding.streamRead
-const streamClose = binding.stream_close || binding.streamClose
 
 /**
  * Parse target host string into host:port format
@@ -34,9 +33,7 @@ const streamClose = binding.stream_close || binding.streamClose
  */
 function parseTarget(target) {
   const trimmed = target.trim()
-  // Remove protocol prefix if present
   const withoutProtocol = trimmed.replace(/^https?:\/\//, "")
-  // Remove path if present
   const hostPart = withoutProtocol.split("/")[0]
 
   const [host, port = "443"] = hostPart.split(":")
@@ -69,34 +66,28 @@ function parseTarget(target) {
  * })
  */
 export function createRatlsFetch(optionsOrTarget) {
-  // Normalize options: accept string shorthand or full options object
   const options =
     typeof optionsOrTarget === "string"
       ? { target: optionsOrTarget }
       : optionsOrTarget
 
-  // Support both 'target' (new) and 'targetHost' (legacy) for backwards compatibility
-  const targetRaw = options.target || options.targetHost
+  const targetRaw = options.target
   if (!targetRaw) {
     throw new Error("target is required (e.g., 'enclave.example.com' or 'enclave.example.com:443')")
   }
 
   const parsed = parseTarget(targetRaw)
   const targetHost = parsed.hostPort
-  // Infer serverName (SNI) from target if not explicitly provided
   const serverName = options.serverName || parsed.serverName
-  const defaultHeaders = options.headers || options.defaultHeaders
+  const defaultHeaders = options.headers
   const onAttestation = options.onAttestation
 
-  // Validate binding availability
   if (typeof httpRequest !== "function") {
-    throw new Error(
-      `ratls-node binding not loaded correctly. Available exports: ${Object.keys(binding).join(", ")}`
-    )
+    throw new Error("ratls-node binding not loaded correctly")
   }
 
   const useStreaming =
-    typeof streamRequest === "function" &&
+    typeof httpStreamRequest === "function" &&
     typeof streamRead === "function" &&
     typeof streamClose === "function"
 
@@ -110,7 +101,6 @@ export function createRatlsFetch(optionsOrTarget) {
     const req = new Request(input, init)
     const url = new URL(req.url, `https://${targetHost}`)
 
-    // Merge default headers with request headers
     const headers = new Headers(defaultHeaders || undefined)
     req.headers.forEach((value, name) => headers.set(name, value))
     const headerEntries = Array.from(headers.entries()).map(([name, value]) => ({
@@ -124,9 +114,8 @@ export function createRatlsFetch(optionsOrTarget) {
     const path = `${url.pathname}${url.search}`
     const method = req.method || "GET"
 
-    // Use streaming API if available (preferred for SSE/chunked responses)
     if (useStreaming) {
-      const resp = await streamRequest(
+      const resp = await httpStreamRequest(
         targetHost,
         serverName,
         method,
@@ -137,21 +126,15 @@ export function createRatlsFetch(optionsOrTarget) {
 
       const attestation = normalizeAttestation(resp.attestation)
 
-      // Fire attestation callback
       if (onAttestation) {
-        try {
-          onAttestation(attestation)
-        } catch (err) {
-          // Don't let callback errors break the request
-          console.warn("[ratls] onAttestation callback error:", err)
-        }
+        onAttestation(attestation)
       }
 
       const responseHeaders = new Headers()
       resp.headers.forEach(({ name, value }) => responseHeaders.append(name, value))
       responseHeaders.set(ATTESTATION_HEADER, JSON.stringify(attestation))
 
-      const streamId = resp.stream_id || resp.streamId || 0
+      const streamId = resp.streamId || 0
       let done = !streamId
       const bodyStream = new ReadableStream({
         async pull(controller) {
@@ -175,10 +158,9 @@ export function createRatlsFetch(optionsOrTarget) {
         },
       })
 
-      return createResponse(bodyStream, resp.status, resp.status_text || resp.statusText, responseHeaders, attestation)
+      return createResponse(bodyStream, resp.status, resp.statusText, responseHeaders, attestation)
     }
 
-    // Fallback to buffered request
     const resp = await httpRequest(
       targetHost,
       serverName,
@@ -190,20 +172,14 @@ export function createRatlsFetch(optionsOrTarget) {
 
     const attestation = normalizeAttestation(resp.attestation)
 
-    // Fire attestation callback
     if (onAttestation) {
-      try {
-        onAttestation(attestation)
-      } catch (err) {
-        console.warn("[ratls] onAttestation callback error:", err)
-      }
+      onAttestation(attestation)
     }
 
     const responseHeaders = new Headers()
     resp.headers.forEach(({ name, value }) => responseHeaders.append(name, value))
     responseHeaders.set(ATTESTATION_HEADER, JSON.stringify(attestation))
 
-    // Stream the body in chunks for consistency with streaming path
     const bodyBuf = new Uint8Array(resp.body)
     const chunkSize = 2048
     let offset = 0
@@ -219,13 +195,10 @@ export function createRatlsFetch(optionsOrTarget) {
       },
     })
 
-    return createResponse(bodyStream, resp.status, resp.status_text || resp.statusText, responseHeaders, attestation)
+    return createResponse(bodyStream, resp.status, resp.statusText, responseHeaders, attestation)
   }
 }
 
-/**
- * Normalize attestation object to consistent shape
- */
 function normalizeAttestation(raw) {
   if (!raw) {
     return {
@@ -238,10 +211,10 @@ function normalizeAttestation(raw) {
   }
   return {
     trusted: raw.trusted ?? false,
-    teeType: raw.tee_type || raw.teeType || "unknown",
+    teeType: raw.teeType || "unknown",
     measurement: raw.measurement ?? null,
-    tcbStatus: raw.tcb_status || raw.tcbStatus || "unknown",
-    advisoryIds: raw.advisory_ids || raw.advisoryIds || [],
+    tcbStatus: raw.tcbStatus || "unknown",
+    advisoryIds: raw.advisoryIds || [],
   }
 }
 
@@ -255,7 +228,6 @@ function createResponse(body, status, statusText, headers, attestation) {
     headers,
   })
 
-  // Attach attestation as enumerable property for easy access
   Object.defineProperty(response, "attestation", {
     value: attestation,
     enumerable: true,
@@ -263,16 +235,7 @@ function createResponse(body, status, statusText, headers, attestation) {
     writable: false,
   })
 
-  // Keep ratlsAttestation for backwards compatibility
-  Object.defineProperty(response, "ratlsAttestation", {
-    value: attestation,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  })
-
   return response
 }
 
-// Default export for convenience
 export default createRatlsFetch

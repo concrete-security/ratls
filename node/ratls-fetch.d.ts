@@ -32,11 +32,6 @@ export interface RatlsFetchOptions {
   target?: string
 
   /**
-   * @deprecated Use `target` instead
-   */
-  targetHost?: string
-
-  /**
    * Server Name Indication (SNI) for TLS
    * @default Derived from target hostname
    */
@@ -47,11 +42,6 @@ export interface RatlsFetchOptions {
    * @example { Authorization: "Bearer token" }
    */
   headers?: Record<string, string>
-
-  /**
-   * @deprecated Use `headers` instead
-   */
-  defaultHeaders?: Record<string, string>
 
   /**
    * Callback fired after each successful attestation verification
@@ -73,8 +63,6 @@ export interface RatlsFetchOptions {
 export interface RatlsResponse extends Response {
   /** Attestation result from the TEE (enumerable) */
   readonly attestation: RatlsAttestation
-  /** @deprecated Use `attestation` instead */
-  readonly ratlsAttestation: RatlsAttestation
 }
 
 /**

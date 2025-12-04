@@ -74,7 +74,6 @@ pub async fn verify_attestation_stream<S>(
 where
     S: AsyncByteStream,
 {
-    // Validate the endpoint path before using it
     validate_endpoint_path(&endpoint.path)?;
 
     let mut nonce = [0u8; 32];
