@@ -13,12 +13,9 @@
  *   OPENAI_MODEL    - Model ID (default: openai/gpt-oss-120b)
  */
 
-import { createRequire } from "module"
 import { createRatlsFetch } from "../ratls-fetch.js"
-
-const require = createRequire(import.meta.url)
-const { createOpenAI } = require("@ai-sdk/openai")
-const { streamText } = require("ai")
+import { createOpenAI } from "@ai-sdk/openai"
+import { streamText } from "ai"
 
 // Configuration
 const target = process.env.RATLS_TARGET || "vllm.concrete-security.com"
@@ -29,10 +26,9 @@ const prompt = process.argv.slice(2).join(" ").trim() || "Say hello from Node RA
 // Track attestation for final summary
 let lastAttestation = null
 
-// Create attested fetch - elegant one-liner with callback
+// Create attested fetch - one-liner with attestation callback
 const fetch = createRatlsFetch({
   target,
-  headers: { Authorization: `Bearer ${apiKey}` },
   onAttestation: (attestation) => {
     lastAttestation = attestation
     console.log(`\n✓ TEE verified: ${attestation.teeType.toUpperCase()}`)
@@ -55,9 +51,9 @@ console.log(`Connecting to ${target}...`)
 console.log(`Model: ${model}`)
 console.log(`Prompt: "${prompt}"`)
 
-// Stream the response
-const { textStream, response } = await streamText({
-  model: openai(model),
+// Stream the response using Chat Completions API (vLLM doesn't support Responses API)
+const { textStream } = await streamText({
+  model: openai.chat(model),
   messages: [{ role: "user", content: prompt }],
 })
 

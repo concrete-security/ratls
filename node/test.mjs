@@ -1,5 +1,8 @@
-import { createRatlsFetch } from "./ratls-fetch.js"
-import binding from "./index.js"
+import { createRatlsAgent, createRatlsFetch } from "./ratls-fetch.js"
+import { createRequire } from "module"
+
+const require = createRequire(import.meta.url)
+const binding = require("./index.cjs")
 
 console.log("Testing ratls-node module...\n")
 
@@ -19,41 +22,51 @@ function test(name, fn) {
 
 try {
   test("Module imports successfully", () => {
-    if (!createRatlsFetch) throw new Error("createRatlsFetch not exported")
+    if (!createRatlsAgent) throw new Error("createRatlsAgent not exported")
   })
-  
+
   test("Native binding loads", () => {
     if (!binding) throw new Error("Binding not loaded")
-    if (typeof binding.httpRequest !== "function") {
-      throw new Error("httpRequest function not available")
+    if (typeof binding.ratlsConnect !== "function") {
+      throw new Error("ratlsConnect function not available")
     }
   })
-  
-  test("createRatlsFetch with string target", () => {
-    const fetch = createRatlsFetch("example.com")
-    if (typeof fetch !== "function") throw new Error("Fetch not a function")
+
+  test("createRatlsAgent with string target", () => {
+    const agent = createRatlsAgent("example.com")
+    if (typeof agent !== "object") throw new Error("Agent not an object")
+    if (typeof agent.createConnection !== "function") {
+      throw new Error("Agent missing createConnection method")
+    }
   })
-  
-  test("createRatlsFetch with options object", () => {
+
+  test("createRatlsAgent with options object", () => {
     let attestationCalled = false
-    const fetch = createRatlsFetch({
+    const agent = createRatlsAgent({
       target: "example.com:443",
-      headers: { "X-Test": "value" },
       onAttestation: (att) => {
         attestationCalled = true
       }
     })
-    if (typeof fetch !== "function") throw new Error("Fetch not a function")
+    if (typeof agent !== "object") throw new Error("Agent not an object")
   })
-  
-  test("createRatlsFetch with port in target", () => {
-    const fetch = createRatlsFetch("example.com:8443")
-    if (typeof fetch !== "function") throw new Error("Fetch not a function")
+
+  test("createRatlsAgent with port in target", () => {
+    const agent = createRatlsAgent("example.com:8443")
+    if (typeof agent !== "object") throw new Error("Agent not an object")
   })
-  
-  test("createRatlsFetch error handling - missing target", () => {
+
+  test("createRatlsAgent with serverName override", () => {
+    const agent = createRatlsAgent({
+      target: "10.0.0.1:443",
+      serverName: "example.com"
+    })
+    if (typeof agent !== "object") throw new Error("Agent not an object")
+  })
+
+  test("createRatlsAgent error handling - missing target", () => {
     try {
-      createRatlsFetch({})
+      createRatlsAgent({})
       throw new Error("Should have thrown error for missing target")
     } catch (e) {
       if (!e.message.includes("target is required")) {
@@ -61,55 +74,72 @@ try {
       }
     }
   })
-  
-  test("Streaming API available", () => {
-    const hasStreaming =
-      typeof binding.httpStreamRequest === "function" &&
-      typeof binding.streamRead === "function" &&
-      typeof binding.streamClose === "function"
-    if (!hasStreaming) {
-      console.log("  (Streaming API not available, using buffered mode)")
+
+  test("createRatlsFetch with string target", () => {
+    const fetch = createRatlsFetch("example.com")
+    if (typeof fetch !== "function") throw new Error("Fetch not a function")
+  })
+
+  test("createRatlsFetch with options object", () => {
+    const fetch = createRatlsFetch({
+      target: "example.com:443",
+      onAttestation: (att) => {}
+    })
+    if (typeof fetch !== "function") throw new Error("Fetch not a function")
+  })
+
+  test("Socket API available", () => {
+    const hasSocketApi =
+      typeof binding.ratlsConnect === "function" &&
+      typeof binding.socketRead === "function" &&
+      typeof binding.socketWrite === "function" &&
+      typeof binding.socketClose === "function" &&
+      typeof binding.socketDestroy === "function"
+    if (!hasSocketApi) {
+      throw new Error("Socket API not fully available")
     }
   })
-  
-  test("Low-level bindings available from binding export", async () => {
-    const bindingExports = await import("./index.js")
-    if (typeof bindingExports.httpRequest !== "function") {
-      throw new Error("httpRequest not exported from index.js")
+
+  test("Low-level bindings available from binding export", () => {
+    const bindingExports = require("./index.cjs")
+    if (typeof bindingExports.ratlsConnect !== "function") {
+      throw new Error("ratlsConnect not exported from index.js")
     }
-    if (typeof bindingExports.httpStreamRequest !== "function") {
-      throw new Error("httpStreamRequest not exported from index.js")
+    if (typeof bindingExports.socketRead !== "function") {
+      throw new Error("socketRead not exported from index.js")
     }
-    if (typeof bindingExports.streamRead !== "function") {
-      throw new Error("streamRead not exported from index.js")
+    if (typeof bindingExports.socketWrite !== "function") {
+      throw new Error("socketWrite not exported from index.js")
     }
-    if (typeof bindingExports.streamClose !== "function") {
-      throw new Error("streamClose not exported from index.js")
+    if (typeof bindingExports.socketClose !== "function") {
+      throw new Error("socketClose not exported from index.js")
+    }
+    if (typeof bindingExports.socketDestroy !== "function") {
+      throw new Error("socketDestroy not exported from index.js")
     }
   })
-  
+
   test("Main entry point only exports high-level API", async () => {
     const mainExports = await import("./ratls-fetch.js")
     if (typeof mainExports.createRatlsFetch !== "function") {
       throw new Error("createRatlsFetch not exported from ratls-fetch.js")
     }
-    if (typeof mainExports.httpRequest === "function") {
-      throw new Error("httpRequest should not be exported from main entry point - use 'ratls-node/binding' instead")
+    if (typeof mainExports.ratlsConnect === "function") {
+      throw new Error("ratlsConnect should not be exported from main entry point - use 'ratls-node/binding' instead")
     }
   })
-  
+
   console.log(`\n✅ Tests passed: ${testsPassed}`)
   if (testsFailed > 0) {
     console.error(`❌ Tests failed: ${testsFailed}`)
     process.exit(1)
   }
-  
+
   console.log("\nNote: Full functionality test requires a valid TEE endpoint.")
   console.log("Run: node examples/ai-sdk-openai-demo.mjs for end-to-end test.")
-  
+
 } catch (error) {
   console.error("❌ Test suite failed:", error.message)
   console.error(error.stack)
   process.exit(1)
 }
-

@@ -1498,10 +1498,6 @@ name = "ratls-node"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
  "napi",
  "napi-build",
  "napi-derive",

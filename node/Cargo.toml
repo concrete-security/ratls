@@ -17,11 +17,7 @@ thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 once_cell = "1.19"
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
 bytes = "1"
-http = "1"
 
 [build-dependencies]
 # napi-build 2.x is compatible with napi v2 and requires rustc >= 1.88

@@ -1,6 +1,6 @@
 # ratls-node
 
-Attested TLS connections for Node.js. Connect directly to Trusted Execution Environments (TEEs) with cryptographic proof of their integrity.
+Attested TLS connections for Node.js. Connect securely to Trusted Execution Environments (TEEs) with cryptographic proof of their integrity.
 
 ## Installation
 
@@ -8,7 +8,7 @@ Attested TLS connections for Node.js. Connect directly to Trusted Execution Envi
 npm install ratls-node
 ```
 
-The package automatically installs the correct prebuilt binary for your platform:
+Prebuilt binaries are included for:
 - macOS (x64, arm64)
 - Linux (x64, arm64) with glibc or musl
 - Windows (x64)
@@ -18,34 +18,36 @@ The package automatically installs the correct prebuilt binary for your platform
 ```typescript
 import { createRatlsFetch } from "ratls-node"
 
-// One-liner: creates a fetch function with RA-TLS verification
 const fetch = createRatlsFetch("enclave.example.com")
-
 const response = await fetch("/api/secure-data")
-console.log(response.attestation.trusted) // true
+
+console.log(response.attestation.trusted)  // true
+console.log(response.attestation.teeType)  // "tdx"
 ```
 
-## Usage with AI SDKs
+## Usage with AI SDK
 
-Works seamlessly with OpenAI-compatible APIs running in TEEs:
+Connect to LLM inference servers running in TEEs (vLLM, etc.):
 
 ```typescript
 import { createRatlsFetch } from "ratls-node"
 import { createOpenAI } from "@ai-sdk/openai"
 import { streamText } from "ai"
 
+const fetch = createRatlsFetch({
+  target: "enclave.example.com",
+  onAttestation: (att) => console.log(`TEE verified: ${att.teeType}`)
+})
+
 const openai = createOpenAI({
   baseURL: "https://enclave.example.com/v1",
   apiKey: process.env.OPENAI_API_KEY,
-  fetch: createRatlsFetch({
-    target: "enclave.example.com",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    onAttestation: (att) => console.log(`Verified ${att.teeType} enclave`)
-  })
+  fetch
 })
 
+// Use .chat() for OpenAI-compatible servers (vLLM, etc.)
 const { textStream } = await streamText({
-  model: openai("gpt-4"),
+  model: openai.chat("your-model"),
   messages: [{ role: "user", content: "Hello from a verified TEE!" }]
 })
 
@@ -53,6 +55,8 @@ for await (const chunk of textStream) {
   process.stdout.write(chunk)
 }
 ```
+
+> **Note**: Use `openai.chat(model)` instead of `openai(model)` for OpenAI-compatible servers. AI SDK v5's default uses the Responses API which most servers don't support yet.
 
 ## API
 
@@ -72,30 +76,40 @@ Create with full configuration:
 
 ```typescript
 const fetch = createRatlsFetch({
-  // Target host (required)
-  target: "enclave.example.com",
-
-  // SNI override (optional, defaults to target hostname)
-  serverName: "enclave.example.com",
-
-  // Default headers for all requests
-  headers: {
-    Authorization: "Bearer token",
-    "X-Custom-Header": "value"
-  },
-
-  // Callback for attestation events
-  onAttestation: (attestation) => {
-    console.log("TEE type:", attestation.teeType)
-    console.log("Trusted:", attestation.trusted)
-    console.log("TCB status:", attestation.tcbStatus)
-
-    // Enforce security policy
-    if (attestation.tcbStatus !== "UpToDate") {
-      console.warn("Platform needs security updates")
+  target: "enclave.example.com",      // Required: host with optional port
+  serverName: "enclave.example.com",  // Optional: SNI override
+  headers: { "X-Custom": "value" },   // Optional: default headers
+  onAttestation: (attestation) => {   // Optional: attestation callback
+    if (!attestation.trusted) {
+      throw new Error("Attestation failed!")
     }
+    console.log("TEE:", attestation.teeType)
+    console.log("TCB:", attestation.tcbStatus)
   }
 })
+```
+
+### `createRatlsAgent(options)`
+
+For use with `https.request`, axios, or other HTTP clients:
+
+```typescript
+import { createRatlsAgent } from "ratls-node"
+import https from "https"
+
+const agent = createRatlsAgent({
+  target: "enclave.example.com",
+  onAttestation: (att) => console.log("Verified:", att.teeType)
+})
+
+// Use with https.request
+https.get("https://enclave.example.com/api", { agent }, (res) => {
+  // res.socket.ratlsAttestation contains attestation data
+})
+
+// Use with axios
+import axios from "axios"
+const client = axios.create({ httpsAgent: agent })
 ```
 
 ### Response Type
@@ -206,11 +220,6 @@ The main package has optional dependencies on platform-specific packages:
 | `@ratls-node/linux-arm64-musl` | Linux ARM64 (musl/Alpine) |
 | `@ratls-node/win32-x64-msvc` | Windows x64 |
 
-## HTTP Stack & Streaming
-
-- Uses Hyper (HTTP/1.1) over the RA-TLS transport, so request/response framing and chunked encoding are handled by a well-tested library instead of custom parsing.
-- Low-level streaming (`stream_read`) respects an optional `maxBytes` hint (default 8192) when splitting incoming chunks, useful for bounded reads or SSE-style consumption.
-
 ## How It Works
 
 1. **Direct TCP Connection** - Connects directly to the TEE endpoint (no proxy needed)
@@ -220,39 +229,6 @@ The main package has optional dependencies on platform-specific packages:
 5. **Request Execution** - Proceeds with the HTTP request over the verified channel
 
 All verification happens automatically on each request. The attestation result is exposed on every response for audit logging or policy enforcement.
-
-## Comparison: Before & After
-
-### Before (verbose)
-
-```typescript
-import { createRatlsFetch } from "./node/ratls-fetch.js"
-
-const ratlsFetch = await createRatlsFetch({
-  targetHost: "vllm.example.com:443",
-  serverName: "vllm.example.com",  // redundant
-  defaultHeaders: { Authorization: "..." }
-})
-
-// Check attestation manually
-const res = await ratlsFetch("/api")
-console.log(res.ratlsAttestation)  // hidden property
-```
-
-### After (elegant)
-
-```typescript
-import { createRatlsFetch } from "ratls-node"
-
-const fetch = createRatlsFetch({
-  target: "vllm.example.com",  // SNI inferred
-  headers: { Authorization: "..." },
-  onAttestation: (att) => console.log(att)  // declarative
-})
-
-const res = await fetch("/api")
-console.log(res.attestation)  // enumerable property
-```
 
 ## TypeScript Support
 

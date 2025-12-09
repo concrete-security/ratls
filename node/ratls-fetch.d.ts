@@ -1,19 +1,15 @@
-/**
- * RA-TLS Node.js Bindings - High-level API
- *
- * Provides attested TLS connections to Trusted Execution Environments (TEEs)
- * with a fetch-compatible API that works seamlessly with AI SDKs.
- */
+import { Agent, AgentOptions } from "https"
+import { Duplex } from "stream"
 
 /**
- * Attestation result from the TEE
+ * Attestation result from RATLS handshake
  */
 export interface RatlsAttestation {
-  /** Whether the attestation was successfully verified */
+  /** Whether the attestation verification succeeded */
   trusted: boolean
-  /** Type of TEE (e.g., "tdx", "sgx") */
+  /** Type of Trusted Execution Environment (e.g., "tdx", "sgx") */
   teeType: string
-  /** Measurement/MRENCLAVE of the TEE workload */
+  /** Workload measurement hash (hex-encoded) */
   measurement: string | null
   /** TCB (Trusted Computing Base) status */
   tcbStatus: string
@@ -22,92 +18,83 @@ export interface RatlsAttestation {
 }
 
 /**
- * Options for creating an RA-TLS fetch function
+ * Response type with attestation data
+ */
+export type RatlsResponse = Response & { attestation?: RatlsAttestation }
+
+/**
+ * Fetch function type returned by createRatlsFetch
+ */
+export type RatlsFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<RatlsResponse>
+
+/**
+ * Options for createRatlsFetch
  */
 export interface RatlsFetchOptions {
-  /**
-   * Target host to connect to
-   * @example "enclave.example.com" or "enclave.example.com:8443"
-   */
-  target?: string
-
-  /**
-   * Server Name Indication (SNI) for TLS
-   * @default Derived from target hostname
-   */
+  /** Target host with optional port (e.g., "enclave.example.com" or "enclave.example.com:8443") */
+  target: string
+  /** Optional SNI hostname override */
   serverName?: string
-
-  /**
-   * Default headers to include in all requests
-   * @example { Authorization: "Bearer token" }
-   */
+  /** Default headers applied to every request */
   headers?: Record<string, string>
-
   /**
-   * Callback fired after each successful attestation verification
-   * Use this for logging, metrics, or security policy enforcement
-   *
-   * @example
-   * onAttestation: (att) => {
-   *   if (att.tcbStatus !== "UpToDate") {
-   *     console.warn("TEE platform needs updates")
-   *   }
-   * }
+   * Callback invoked after attestation, before request proceeds.
+   * Throw an error to reject the connection.
    */
   onAttestation?: (attestation: RatlsAttestation) => void
 }
 
 /**
- * Response type with attestation data
- */
-export interface RatlsResponse extends Response {
-  /** Attestation result from the TEE (enumerable) */
-  readonly attestation: RatlsAttestation
-}
-
-/**
- * Fetch function type with attestation support
- */
-export type RatlsFetch = (
-  input: RequestInfo | URL,
-  init?: RequestInit
-) => Promise<RatlsResponse>
-
-/**
- * Create an RA-TLS enabled fetch function
- *
- * The returned fetch function establishes attested TLS connections directly
- * to TEE endpoints. Each request performs attestation verification and
- * exposes the result on the response.
- *
- * @param optionsOrTarget - Target host string or options object
- * @returns A fetch-compatible function with attestation support
+ * Create a fetch function that uses RATLS for all requests
  *
  * @example Simple usage
- * ```typescript
+ * ```ts
  * import { createRatlsFetch } from "ratls-node"
  *
  * const fetch = createRatlsFetch("enclave.example.com")
  * const response = await fetch("/api/data")
- * console.log(response.attestation.trusted) // true
+ * console.log(response.attestation?.teeType) // "tdx"
  * ```
  *
  * @example With AI SDK
- * ```typescript
+ * ```ts
  * import { createRatlsFetch } from "ratls-node"
  * import { createOpenAI } from "@ai-sdk/openai"
  *
- * const openai = createOpenAI({
- *   baseURL: "https://enclave.example.com/v1",
- *   fetch: createRatlsFetch({
- *     target: "enclave.example.com",
- *     headers: { Authorization: `Bearer ${apiKey}` },
- *     onAttestation: (att) => console.log(`TEE: ${att.teeType}`)
- *   })
+ * const fetch = createRatlsFetch({
+ *   target: "enclave.example.com",
+ *   onAttestation: (att) => console.log("TEE:", att.teeType)
  * })
+ * const openai = createOpenAI({ baseURL: "https://enclave.example.com/v1", fetch })
  * ```
  */
-export function createRatlsFetch(optionsOrTarget: string | RatlsFetchOptions): RatlsFetch
+export function createRatlsFetch(options: string | RatlsFetchOptions): RatlsFetch
+
+// --- Advanced: https.Agent for use with axios, https.request, etc. ---
+
+/**
+ * A Duplex socket with RATLS attestation attached
+ */
+export interface RatlsSocket extends Duplex {
+  readonly ratlsAttestation: RatlsAttestation
+  readonly encrypted: true
+  readonly authorized: boolean
+  readonly authorizationError: string | null
+}
+
+/**
+ * Options for createRatlsAgent
+ */
+export interface RatlsAgentOptions extends AgentOptions {
+  target: string
+  serverName?: string
+  onAttestation?: (attestation: RatlsAttestation, socket: RatlsSocket) => void
+}
+
+/**
+ * Create an https.Agent for use with axios, https.request, etc.
+ * For most use cases, prefer createRatlsFetch() instead.
+ */
+export function createRatlsAgent(options: string | RatlsAgentOptions): Agent
 
 export default createRatlsFetch
-
