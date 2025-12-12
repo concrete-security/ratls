@@ -20,59 +20,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS
           - os: macos-latest
             target: x86_64-apple-darwin
-            build: |
-              cd node
-              pnpm build --target x86_64-apple-darwin
-              strip -x *.node
           - os: macos-latest
             target: aarch64-apple-darwin
-            build: |
-              cd node
-              pnpm build --target aarch64-apple-darwin
-              strip -x *.node
-          # Linux GNU
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: |
-              cd node
-              pnpm build --target x86_64-unknown-linux-gnu
-              strip *.node
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            build: |
-              sudo apt-get update
-              sudo apt-get install -y gcc-aarch64-linux-gnu
-              cd node
-              pnpm build --target aarch64-unknown-linux-gnu
-              aarch64-linux-gnu-strip *.node
-          # Linux musl
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build: |
-              sudo apt-get update
-              sudo apt-get install -y musl-tools
-              cd node
-              pnpm build --target x86_64-unknown-linux-musl
-              strip *.node
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build: |
-              sudo apt-get update
-              sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
-              cd node
-              pnpm build --target aarch64-unknown-linux-musl
-              aarch64-linux-gnu-strip *.node
-          # Windows
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            build: |
-              cd node
-              pnpm build --target x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: node
     steps:
       - uses: actions/checkout@v4
 
@@ -84,7 +50,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -92,12 +58,39 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install dependencies
-        working-directory: node
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux dependencies
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          pkgs=()
+          if [[ "${{ matrix.target }}" == aarch64-unknown-linux-* ]]; then
+            pkgs+=("gcc-aarch64-linux-gnu")
+          fi
+          if [[ "${{ matrix.target }}" == *-unknown-linux-musl ]]; then
+            pkgs+=("musl-tools")
+          fi
+          if [ ${#pkgs[@]} -gt 0 ]; then
+            sudo apt-get install -y "${pkgs[@]}"
+          fi
 
       - name: Build native module
         shell: bash
-        run: ${{ matrix.build }}
+        run: pnpm build --target ${{ matrix.target }}
+
+      - name: Strip native module
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            strip -x *.node
+          elif [[ "${{ matrix.target }}" == aarch64-unknown-linux-* ]]; then
+            aarch64-linux-gnu-strip *.node
+          else
+            strip *.node
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -109,6 +102,9 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: node
     steps:
       - uses: actions/checkout@v4
 
@@ -121,11 +117,10 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - name: Install dependencies
-        working-directory: node
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -133,16 +128,13 @@ jobs:
           path: node/artifacts
 
       - name: Move artifacts
-        working-directory: node
         run: pnpm artifacts
 
       - name: List packages
-        working-directory: node
         run: ls -la npm/
 
       - name: Publish (dry run)
-        if: ${{ github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'false' }}
-        working-directory: node
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'false' }}
         run: |
           echo "Dry run - would publish these packages:"
           ls -la npm/
@@ -150,12 +142,10 @@ jobs:
           cat package.json | grep -E '"name"|"version"'
 
       - name: Publish to npm
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event.inputs.dry_run == 'false' }}
-        working-directory: node
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false') }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Publish platform-specific packages first
           for dir in npm/*/; do
             if [ -d "$dir" ]; then
               echo "Publishing $dir"
@@ -164,5 +154,4 @@ jobs:
               cd ../..
             fi
           done
-          # Then publish the main package
           npm publish --access public
