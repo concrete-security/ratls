@@ -29,12 +29,13 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
-      - name: Build node crate
-        run: cargo build -p ratls-node --release
+          version: 10
       - name: Install node dependencies
         working-directory: node
         run: pnpm install --frozen-lockfile
+      - name: Build native module
+        working-directory: node
+        run: pnpm build
       - name: Run node tests
         working-directory: node
         run: npm test
