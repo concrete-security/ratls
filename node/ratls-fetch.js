@@ -240,7 +240,8 @@ export function createRatlsAgent(optionsOrTarget) {
 }
 
 /**
- * Create a fetch function that uses RATLS for all requests
+ * Create a fetch function that uses RATLS for requests to the target,
+ * and falls back to native global fetch for everything else.
  *
  * @param {string | RatlsFetchOptions} optionsOrTarget - Target host or options object
  * @returns {Function} A fetch-compatible function
@@ -270,6 +271,29 @@ export function createRatlsFetch(optionsOrTarget) {
   const defaultHeaders = options.headers || undefined
 
   return async function ratlsFetch(input, init = {}) {
+    let destUrl = null
+    let isRelative = false
+
+    try {
+      if (input instanceof URL) {
+        destUrl = input
+      } else if (typeof input === "string") {
+        destUrl = new URL(input)
+      } else if (input && typeof input === "object" && input.url) {
+        destUrl = new URL(input.url)
+      }
+    } catch (e) {
+      isRelative = true
+    }
+
+    const shouldProxy = isRelative || (destUrl?.hostname === parsed.host)
+
+    if (!shouldProxy) {
+      const urlString = destUrl?.toString() ?? (typeof input === "string" ? input : input?.url ?? String(input))
+      debug("fetch:passthrough", { url: urlString })
+      return globalThis.fetch(input, init)
+    }
+
     const url = new URL(input, `https://${parsed.hostPort}`)
     const headers = mergeHeaders(defaultHeaders, init.headers)
     const { body, contentLength, kind } = normalizeBody(init.body)

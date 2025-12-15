@@ -45,7 +45,7 @@ export interface RatlsFetchOptions {
 }
 
 /**
- * Create a fetch function that uses RATLS for all requests
+ * Create a fetch function that uses RATLS for requests to the configured target (other hosts use native fetch)
  *
  * @example Simple usage
  * ```ts

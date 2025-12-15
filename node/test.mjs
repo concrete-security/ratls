@@ -88,6 +88,27 @@ try {
     if (typeof fetch !== "function") throw new Error("Fetch not a function")
   })
 
+  test("createRatlsFetch hybrid routing - accepts relative and absolute URLs", () => {
+    const fetch = createRatlsFetch("example.com")
+    if (typeof fetch !== "function") throw new Error("Fetch not a function")
+    
+    const relativeUrl = "/api/data"
+    const absoluteUrl = "https://example.com/api/data"
+    const otherHostUrl = "https://google.com"
+    
+    const p1 = fetch(relativeUrl, { method: "GET" })
+    const p2 = fetch(absoluteUrl, { method: "GET" })
+    const p3 = fetch(otherHostUrl, { method: "GET" })
+    
+    if (!(p1 instanceof Promise)) throw new Error("Fetch should return a Promise")
+    if (!(p2 instanceof Promise)) throw new Error("Fetch should return a Promise")
+    if (!(p3 instanceof Promise)) throw new Error("Fetch should return a Promise")
+    
+    p1.catch(() => {})
+    p2.catch(() => {})
+    p3.catch(() => {})
+  })
+
   test("Socket API available", () => {
     const hasSocketApi =
       typeof binding.ratlsConnect === "function" &&
