@@ -5,16 +5,17 @@
 
 #![cfg(target_arch = "wasm32")]
 
-mod transport;
-
+use async_io_stream::IoStream;
 use ratls_core::{
     platform::{AsyncReadExt, AsyncWriteExt, TlsStream},
     ratls_connect, Policy,
 };
 use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
-use transport::WasmWsStream;
 use wasm_bindgen::prelude::*;
+use ws_stream_wasm::{WsMeta, WsStreamIo};
+
+type WsIo = IoStream<WsStreamIo, Vec<u8>>;
 
 /// Attestation result summary exposed to JavaScript.
 #[derive(Clone, Serialize)]
@@ -31,7 +32,7 @@ pub struct AttestationSummary {
 /// is delegated to JavaScript for simplicity.
 #[wasm_bindgen]
 pub struct AttestedStream {
-    stream: Rc<RefCell<Option<TlsStream<WasmWsStream>>>>,
+    stream: Rc<RefCell<Option<TlsStream<WsIo>>>>,
     attestation: AttestationSummary,
 }
 
@@ -44,12 +45,12 @@ impl AttestedStream {
     /// * `server_name` - TLS server name for SNI
     #[wasm_bindgen(js_name = connect)]
     pub async fn connect(ws_url: &str, server_name: &str) -> Result<AttestedStream, JsValue> {
-        let ws = WasmWsStream::connect(ws_url)
+        let (_meta, ws_stream) = WsMeta::connect(ws_url, None)
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let (tls, att) = ratls_connect(
-            ws,
+            ws_stream.into_io(),
             server_name,
             Policy::default(),
             Some(vec!["http/1.1".into()]),

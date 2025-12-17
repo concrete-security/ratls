@@ -157,14 +157,12 @@ pub trait AsyncByteStream: AsyncRead + AsyncWrite + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Unpin> AsyncByteStream for T {}
 
 /// Verifier that validates certificates against public CAs and records the leaf cert.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct CaVerifier {
     inner: Arc<WebPkiServerVerifier>,
     last_cert: Arc<Mutex<Option<Vec<u8>>>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl CaVerifier {
     fn new() -> Self {
         let mut root_store = RootCertStore::empty();
@@ -188,78 +186,6 @@ impl CaVerifier {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl ServerCertVerifier for CaVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        intermediates: &[CertificateDer<'_>],
-        server_name: &ServerName<'_>,
-        ocsp_response: &[u8],
-        now: UnixTime,
-    ) -> Result<ServerCertVerified, RustlsError> {
-        self.inner
-            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)?;
-        if let Ok(mut guard) = self.last_cert.lock() {
-            *guard = Some(end_entity.to_vec());
-        }
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, RustlsError> {
-        self.inner.verify_tls12_signature(message, cert, dss)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, RustlsError> {
-        self.inner.verify_tls13_signature(message, cert, dss)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.inner.supported_verify_schemes()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Debug)]
-struct CaVerifier {
-    inner: Arc<WebPkiServerVerifier>,
-    last_cert: Arc<Mutex<Option<Vec<u8>>>>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl CaVerifier {
-    fn new() -> Self {
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let provider = get_crypto_provider();
-        let inner = WebPkiServerVerifier::builder_with_provider(
-            Arc::new(root_store),
-            provider,
-        )
-        .build()
-        .expect("failed to build WebPkiServerVerifier");
-        Self {
-            inner,
-            last_cert: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    fn take_cert(&self) -> Option<Vec<u8>> {
-        self.last_cert.lock().ok()?.take()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl ServerCertVerifier for CaVerifier {
     fn verify_server_cert(
         &self,

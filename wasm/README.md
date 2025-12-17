@@ -29,10 +29,16 @@ make build-wasm
 cd wasm && wasm-pack build --target web --out-dir pkg
 ```
 
-**macOS note:** Requires Clang with WebAssembly target support:
+**macOS note:** Requires Clang with WebAssembly target support (Apple's Xcode clang doesn't support WASM):
 ```bash
 brew install llvm
-CC=/opt/homebrew/opt/llvm/bin/clang ./build-wasm.sh
+
+# Set environment variables for the build
+export CC=/opt/homebrew/opt/llvm/bin/clang
+export AR=/opt/homebrew/opt/llvm/bin/llvm-ar
+
+# Then build
+make build-wasm
 ```
 
 ## API

@@ -3,6 +3,7 @@ members = [
   "core",
   "wasm",
   "wasm/proxy",
+  "node",
 ]
 resolver = "2"
 
@@ -11,17 +12,9 @@ edition = "2021"
 license = "MIT"
 rust-version = "1.75"
 
+# Shared dependency versions for workspace members.
+# Use `{ workspace = true }` in member Cargo.toml to reference these.
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_cbor = "0.11"
-serde_bytes = "0.11"
 serde_json = "1.0"
-sha2 = "0.10"
 thiserror = "1.0"
-x509-parser = { version = "0.16", features = ["verify"] }
-hex = "0.4"
-rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12", "ring"] }
-tokio = { version = "1", features = ["rt", "net", "io-util"] }
-tokio-rustls = { version = "0.26" }
-tokio-tungstenite = "0.21"
-dcap-qvl = "0.3.4"
