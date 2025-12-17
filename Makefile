@@ -88,7 +88,9 @@ PROXY_ALLOWLIST ?= $(PROXY_TARGET),google.com:443
 demo-wasm:
 	@echo "Starting RA-TLS WASM demo..."
 	@echo "  Proxy:  ws://127.0.0.1:$(PROXY_PORT)"
-	@echo "  Demo:   http://localhost:$(DEMO_PORT)/demo/minimal.html"
+	@echo "  Demos:"
+	@echo "    - http://localhost:$(DEMO_PORT)/demo/minimal.html  (basic test)"
+	@echo "    - http://localhost:$(DEMO_PORT)/demo/ai-sdk.html   (AI SDK streaming)"
 	@echo ""
 	@echo "Press Ctrl+C to stop both servers"
 	@echo ""
