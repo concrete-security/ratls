@@ -23,7 +23,7 @@ async function run() {
     await badFetch("/");
     log("Unexpected success!");
   } catch (error) {
-    log("Expected failure: " + error.message);
+    log("Expected failure: " + (error?.message || String(error)));
   }
 
   // 2. Connect to a real TEE server (will succeed)
@@ -45,8 +45,8 @@ async function run() {
     const data = await response.json();
     log("Response: " + JSON.stringify(data, null, 2));
   } catch (error) {
-    log("Error: " + error.message);
+    log("Error: " + (error?.message || String(error)));
   }
 }
 
-run().catch(e => log("Fatal error: " + e.message));
+run().catch(e => log("Fatal error: " + (e?.message || String(e))));

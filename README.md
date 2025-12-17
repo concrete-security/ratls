@@ -31,27 +31,29 @@ Browsers lack raw TCP sockets and attestation primitives. The toolkit uses WebSo
 - `TdxTcbPolicy`: Encodes acceptable TDX TCB levels and measurements.
 
 ## `wasm/`
-- `WasmWsStream`: Wraps browser `WebSocket` into `AsyncRead + AsyncWrite` for `rustls`.
-- `run_attestation_check(...)`: Diagnostics helper.
-- `httpRequest(...)`: HTTP/1.1 over RA-TLS with streaming bodies.
+- `RatlsHttp`: HTTP client over attested TLS with chunked transfer encoding support.
+- `AttestedStream`: Low-level attested TLS stream for custom protocols.
+- `createRatlsFetch(...)`: Fetch-compatible API for browser applications.
 
 Example:
 ```javascript
-import init, { httpRequest } from "ratls-wasm";
+import { createRatlsFetch } from "./pkg/ratls-fetch.js";
 
-await init();
+const fetch = createRatlsFetch({
+  proxyUrl: "ws://127.0.0.1:9000",
+  targetHost: "secure-enclave.com",
+  onAttestation: (att) => console.log("TEE:", att.teeType)
+});
 
-const ratlsResponse = await httpRequest(
-  "ws://secure-enclave.com:443",
-  "secure-enclave.com",
-  "secure-enclave.com",
-  "GET",
-  "/health",
-  [],
-  undefined
-);
-// Stream the body with await ratlsResponse.readChunk() until empty
-// ratlsResponse.attestation() returns the attestation result
+const response = await fetch("/v1/chat/completions", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ model: "gpt", messages: [...] })
+});
+
+// Streaming works (chunked encoding handled in WASM)
+for await (const chunk of response.body) { /* ... */ }
+console.log(response.attestation); // { trusted: true, teeType: "Tdx", ... }
 ```
 
 ## Additional Directories
@@ -60,7 +62,7 @@ const ratlsResponse = await httpRequest(
 - `docs/`: Design notes, specs, and task tracking.
 
 ## Binding status
-- WASM: functional; provides `RatlsClient` and `httpRequest`.
+- WASM: functional; provides `RatlsHttp`, `AttestedStream`, and `createRatlsFetch`.
 - Python: scaffolding in progress (`python/README.md`) with planned async API parity once the core pieces stabilize.
 
 ---

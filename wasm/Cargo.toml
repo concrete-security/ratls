@@ -18,6 +18,7 @@ ws_stream_wasm = "0.7"
 async_io_stream = "0.3"
 wasm-streams = "0.4"
 web-sys = { version = "0.3", features = ["ReadableStream", "WritableStream", "ReadableStreamDefaultController"] }
+httparse = "1.8"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
