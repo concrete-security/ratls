@@ -168,3 +168,120 @@ fn extract_target(req: &Request) -> Option<String> {
             .map(|(_, value)| value.into_owned())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::Uri;
+
+    #[test]
+    fn test_parse_allowlist_empty() {
+        // Temporarily clear the env var
+        std::env::remove_var("TEST_ALLOWLIST_EMPTY");
+        let result = parse_allowlist("TEST_ALLOWLIST_EMPTY");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_allowlist_single() {
+        std::env::set_var("TEST_ALLOWLIST_SINGLE", "host1:443");
+        let result = parse_allowlist("TEST_ALLOWLIST_SINGLE");
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("host1:443"));
+    }
+
+    #[test]
+    fn test_parse_allowlist_multiple() {
+        std::env::set_var("TEST_ALLOWLIST_MULTI", "host1:443,host2:8443,host3:9000");
+        let result = parse_allowlist("TEST_ALLOWLIST_MULTI");
+        assert_eq!(result.len(), 3);
+        assert!(result.contains("host1:443"));
+        assert!(result.contains("host2:8443"));
+        assert!(result.contains("host3:9000"));
+    }
+
+    #[test]
+    fn test_parse_allowlist_with_whitespace() {
+        std::env::set_var("TEST_ALLOWLIST_WS", "  host1:443  ,  host2:8443  ");
+        let result = parse_allowlist("TEST_ALLOWLIST_WS");
+        assert_eq!(result.len(), 2);
+        assert!(result.contains("host1:443"));
+        assert!(result.contains("host2:8443"));
+    }
+
+    #[test]
+    fn test_parse_allowlist_with_empty_entries() {
+        std::env::set_var("TEST_ALLOWLIST_EMPTY_ENTRIES", "host1:443,,host2:8443,");
+        let result = parse_allowlist("TEST_ALLOWLIST_EMPTY_ENTRIES");
+        assert_eq!(result.len(), 2);
+        assert!(result.contains("host1:443"));
+        assert!(result.contains("host2:8443"));
+    }
+
+    #[test]
+    fn test_is_target_allowed_in_list() {
+        let mut allowlist = HashSet::new();
+        allowlist.insert("host1:443".to_string());
+        allowlist.insert("host2:8443".to_string());
+
+        assert!(is_target_allowed("host1:443", &allowlist));
+        assert!(is_target_allowed("host2:8443", &allowlist));
+    }
+
+    #[test]
+    fn test_is_target_allowed_not_in_list() {
+        let mut allowlist = HashSet::new();
+        allowlist.insert("host1:443".to_string());
+
+        assert!(!is_target_allowed("host2:443", &allowlist));
+        assert!(!is_target_allowed("host1:8443", &allowlist));
+        assert!(!is_target_allowed("malicious.com:443", &allowlist));
+    }
+
+    #[test]
+    fn test_is_target_allowed_empty_list() {
+        let allowlist = HashSet::new();
+        assert!(!is_target_allowed("any:443", &allowlist));
+    }
+
+    #[test]
+    fn test_extract_target_with_target_param() {
+        let uri: Uri = "/tunnel?target=host1:443".parse().unwrap();
+        let req = Request::builder().uri(uri).body(()).unwrap();
+        let result = extract_target(&req);
+        assert_eq!(result, Some("host1:443".to_string()));
+    }
+
+    #[test]
+    fn test_extract_target_with_multiple_params() {
+        let uri: Uri = "/tunnel?foo=bar&target=host2:8443&baz=qux".parse().unwrap();
+        let req = Request::builder().uri(uri).body(()).unwrap();
+        let result = extract_target(&req);
+        assert_eq!(result, Some("host2:8443".to_string()));
+    }
+
+    #[test]
+    fn test_extract_target_no_query() {
+        let uri: Uri = "/tunnel".parse().unwrap();
+        let req = Request::builder().uri(uri).body(()).unwrap();
+        let result = extract_target(&req);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_target_no_target_param() {
+        let uri: Uri = "/tunnel?foo=bar&baz=qux".parse().unwrap();
+        let req = Request::builder().uri(uri).body(()).unwrap();
+        let result = extract_target(&req);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_target_url_encoded() {
+        let uri: Uri = "/tunnel?target=host%3A443".parse().unwrap();
+        let req = Request::builder().uri(uri).body(()).unwrap();
+        let result = extract_target(&req);
+        // URL decoding should handle %3A -> :
+        assert_eq!(result, Some("host:443".to_string()));
+    }
+}

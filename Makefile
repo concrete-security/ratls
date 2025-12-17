@@ -1,37 +1,47 @@
-.PHONY: help test test-all test-wasm build build-wasm build-node test-node clean demo-wasm
+.PHONY: help test test-all test-wasm test-wasm-node test-proxy build build-wasm build-node test-node clean demo-wasm
 
 CARGO ?= cargo
 DEMO_PORT ?= 8080
 
 help:
 	@echo "Available targets:"
-	@echo "  make test         # run native Rust tests (core, node, proxy)"
-	@echo "  make test-wasm    # cargo check ratls-wasm for wasm32 target"
-	@echo "  make test-node    # run Node.js binding tests"
-	@echo "  make test-all     # run all tests (native + node)"
+	@echo "  make test           # run native Rust tests (core, proxy)"
+	@echo "  make test-proxy     # run proxy unit and integration tests"
+	@echo "  make test-wasm      # cargo check ratls-wasm for wasm32 target"
+	@echo "  make test-wasm-node # run WASM tests in Node.js via wasm-pack"
+	@echo "  make test-node      # run Node.js binding tests"
+	@echo "  make test-all       # run all tests (native + wasm + node)"
 	@echo ""
-	@echo "  make build        # build all native crates"
-	@echo "  make build-wasm   # build WASM package with wasm-pack"
-	@echo "  make build-node   # build Node.js native bindings"
+	@echo "  make build          # build all native crates"
+	@echo "  make build-wasm     # build WASM package with wasm-pack"
+	@echo "  make build-node     # build Node.js native bindings"
 	@echo ""
-	@echo "  make demo-wasm    # run proxy + serve demo at http://localhost:$(DEMO_PORT)/demo/"
+	@echo "  make demo-wasm      # run proxy + serve demo at http://localhost:$(DEMO_PORT)/demo/"
 	@echo ""
-	@echo "  make clean        # clean all build artifacts"
+	@echo "  make clean          # clean all build artifacts"
 
 # Native Rust tests (excludes WASM crate which needs special toolchain)
 test:
 	$(CARGO) test --workspace --exclude ratls-wasm
 
+# Proxy unit and integration tests
+test-proxy:
+	$(CARGO) test -p ratls-proxy
+
 # Check WASM crate compiles for wasm32 target
 test-wasm:
 	$(CARGO) check -p ratls-wasm --target wasm32-unknown-unknown
+
+# Run WASM tests in Node.js via wasm-pack
+test-wasm-node:
+	wasm-pack test --node wasm
 
 # Node.js binding tests
 test-node:
 	cd node && pnpm test
 
 # All tests
-test-all: test test-node
+test-all: test test-wasm test-node
 
 # Build all native crates
 build:

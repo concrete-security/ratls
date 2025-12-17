@@ -25,6 +25,3 @@ RATLS_PROXY_ALLOWLIST="vllm.concrete-security.com:443,192.168.1.100:8443" ./ratl
 - Endpoints: `wss://proxy/tunnel?target=host:port`; optional WebTransport stream mapping to TCP.
 - AuthN/AuthZ (JWT or mTLS) plus destination ACL to prevent SSRF.
 - Origin allowlist for browser clients, idle timeouts, backpressure, and metrics (connects, bytes, duration).
-
-## Next steps
-- Build a simple echo/mirror integration test with the WASM client once available.

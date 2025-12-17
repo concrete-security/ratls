@@ -169,3 +169,77 @@ impl AttestedStream {
         Ok(())
     }
 }
+
+#[cfg(all(target_arch = "wasm32", test))]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    // Tests can run in both browser and Node.js
+    // Remove run_in_browser to allow Node.js execution
+
+    #[wasm_bindgen_test]
+    fn test_attestation_summary_serialization() {
+        let summary = AttestationSummary {
+            trusted: true,
+            tee_type: "Tdx".to_string(),
+            tcb_status: "UpToDate".to_string(),
+            advisory_ids: vec!["INTEL-SA-00001".to_string()],
+        };
+
+        // Test that it can be serialized to JSON
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"trusted\":true"));
+        assert!(json.contains("\"teeType\":\"Tdx\""));
+        assert!(json.contains("\"tcbStatus\":\"UpToDate\""));
+        assert!(json.contains("INTEL-SA-00001"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_attestation_summary_camel_case() {
+        let summary = AttestationSummary {
+            trusted: false,
+            tee_type: "Snp".to_string(),
+            tcb_status: "SWHardeningNeeded".to_string(),
+            advisory_ids: vec![],
+        };
+
+        let json = serde_json::to_string(&summary).unwrap();
+        // Verify camelCase renaming is applied
+        assert!(json.contains("teeType"));
+        assert!(json.contains("tcbStatus"));
+        assert!(json.contains("advisoryIds"));
+        // Verify snake_case is NOT present
+        assert!(!json.contains("tee_type"));
+        assert!(!json.contains("tcb_status"));
+        assert!(!json.contains("advisory_ids"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_attestation_summary_to_js_value() {
+        let summary = AttestationSummary {
+            trusted: true,
+            tee_type: "Tdx".to_string(),
+            tcb_status: "UpToDate".to_string(),
+            advisory_ids: vec!["ADV1".to_string(), "ADV2".to_string()],
+        };
+
+        // Test conversion to JsValue via serde-wasm-bindgen
+        let js_value = serde_wasm_bindgen::to_value(&summary).unwrap();
+        assert!(!js_value.is_undefined());
+        assert!(!js_value.is_null());
+    }
+
+    #[wasm_bindgen_test]
+    fn test_attestation_summary_empty_advisories() {
+        let summary = AttestationSummary {
+            trusted: true,
+            tee_type: "Tdx".to_string(),
+            tcb_status: "UpToDate".to_string(),
+            advisory_ids: vec![],
+        };
+
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"advisoryIds\":[]"));
+    }
+}

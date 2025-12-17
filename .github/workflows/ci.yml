@@ -18,6 +18,30 @@ jobs:
       - name: Run core tests
         run: cargo test --all-features
 
+  test-proxy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run proxy unit tests
+        run: cargo test -p ratls-proxy --lib
+      - name: Run proxy integration tests
+        run: cargo test -p ratls-proxy --test integration
+
+  test-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Check WASM compilation
+        run: cargo check -p ratls-wasm --target wasm32-unknown-unknown
+      - name: Run WASM tests (Node.js)
+        run: wasm-pack test --node wasm
+
   test-node:
     runs-on: ubuntu-latest
     steps:
