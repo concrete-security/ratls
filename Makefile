@@ -1,6 +1,7 @@
-.PHONY: help test test-all test-wasm build build-wasm build-node test-node clean
+.PHONY: help test test-all test-wasm build build-wasm build-node test-node clean demo-wasm
 
 CARGO ?= cargo
+DEMO_PORT ?= 8080
 
 help:
 	@echo "Available targets:"
@@ -12,6 +13,8 @@ help:
 	@echo "  make build        # build all native crates"
 	@echo "  make build-wasm   # build WASM package with wasm-pack"
 	@echo "  make build-node   # build Node.js native bindings"
+	@echo ""
+	@echo "  make demo-wasm    # run proxy + serve demo at http://localhost:$(DEMO_PORT)/demo/"
 	@echo ""
 	@echo "  make clean        # clean all build artifacts"
 
@@ -47,3 +50,21 @@ clean:
 	$(CARGO) clean
 	rm -rf wasm/pkg
 	rm -rf node/*.node node/index.cjs
+
+# Serve WASM demo with proxy
+PROXY_PORT ?= 9000
+PROXY_TARGET ?= vllm.concrete-security.com:443
+PROXY_ALLOWLIST ?= $(PROXY_TARGET),google.com:443
+
+demo-wasm:
+	@echo "Starting RA-TLS WASM demo..."
+	@echo "  Proxy:  ws://127.0.0.1:$(PROXY_PORT)"
+	@echo "  Demo:   http://localhost:$(DEMO_PORT)/demo/minimal.html"
+	@echo ""
+	@echo "Press Ctrl+C to stop both servers"
+	@echo ""
+	@trap 'kill 0' EXIT; \
+	RATLS_PROXY_TARGET="$(PROXY_TARGET)" RATLS_PROXY_ALLOWLIST="$(PROXY_ALLOWLIST)" RATLS_PROXY_LISTEN="127.0.0.1:$(PROXY_PORT)" \
+		$(CARGO) run -p ratls-proxy & \
+	sleep 1 && cd wasm && python3 -m http.server $(DEMO_PORT) & \
+	wait

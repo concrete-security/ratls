@@ -15,8 +15,8 @@ Browser (ratls-fetch.js)          WASM (ratls_wasm)           Proxy             
         │                               │◄──── TLS handshake + attestation ───────►│
         │◄─── attestation result ───────│                       │                  │
         │                               │                       │                  │
-        │──── stream.write(request) ───►│──── encrypted ───────►│──── raw ────────►│
-        │◄─── stream.read() ────────────│◄──── encrypted ───────│◄──── raw ────────│
+        │──── stream.send(request) ────►│──── encrypted ───────►│──── raw ────────►│
+        │◄─── stream.readable ──────────│◄──── encrypted ───────│◄──── raw ────────│
 ```
 
 ## Building
@@ -43,64 +43,51 @@ make build-wasm
 
 ## API
 
-### Low-level: `AttestedStream`
-
-Direct access to the attested TLS stream:
-
-```typescript
-import init, { AttestedStream } from "ratls-wasm";
-
-await init();
-
-// Connect via proxy and perform RA-TLS handshake
-const stream = await AttestedStream.connect(
-  "ws://127.0.0.1:9000?target=vllm.example.com:443",
-  "vllm.example.com"
-);
-
-// Check attestation
-const att = stream.attestation();
-console.log(att.trusted, att.teeType, att.tcbStatus);
-
-// Read/write raw bytes
-await stream.write(new TextEncoder().encode("GET / HTTP/1.1\r\n\r\n"));
-const response = await stream.read(8192);
-
-// Close when done
-await stream.close();
-```
-
-### High-level: `createRatlsFetch()`
+### `createRatlsFetch(options)`
 
 Fetch-compatible API with HTTP handling in JavaScript:
 
-```typescript
-import init from "ratls-wasm";
-import { createRatlsFetch } from "ratls-wasm/ratls-fetch.js";
+```javascript
+import { init, createRatlsFetch } from "./pkg/ratls-fetch.js";
 
 await init();
 
-const ratlsFetch = createRatlsFetch({
+const fetch = createRatlsFetch({
   proxyUrl: "ws://127.0.0.1:9000",
-  targetHost: "vllm.example.com:443",
-  onAttestation: (att) => {
-    console.log(`TEE verified: ${att.teeType}, trusted: ${att.trusted}`);
-  }
+  targetHost: "vllm.example.com",
+  onAttestation: (att) => console.log("TEE:", att.teeType)
 });
 
 // Use like regular fetch
-const response = await ratlsFetch("/v1/chat/completions", {
+const response = await fetch("/v1/chat/completions", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ model: "gpt", messages: [...] })
 });
 
-// Standard Response API
 console.log(response.status);
-const data = await response.json();
+console.log(response.attestation); // { trusted: true, teeType: "Tdx", ... }
+```
 
-// Attestation attached to response
-console.log(response.attestation);
+### Low-level: `AttestedStream`
+
+Direct access to the attested TLS stream:
+
+```javascript
+import init, { AttestedStream } from "./pkg/ratls_wasm.js";
+
+await init();
+
+const stream = await AttestedStream.connect(
+  "ws://127.0.0.1:9000?target=vllm.example.com:443",
+  "vllm.example.com"
+);
+
+console.log(stream.attestation()); // { trusted, teeType, tcbStatus }
+
+await stream.send(new TextEncoder().encode("GET / HTTP/1.1\r\n\r\n"));
+const reader = stream.readable.getReader();
+// ... read response ...
 ```
 
 ## Proxy
@@ -119,14 +106,15 @@ The proxy just forwards bytes - it doesn't terminate TLS. All encryption and att
 
 ## Demo
 
-A browser demo is included in `demo/`:
+A minimal browser demo is in `demo/`:
 
 ```bash
-# Terminal 1: Start proxy
-RATLS_PROXY_ALLOWLIST="vllm.concrete-security.com:443" cargo run -p ratls-proxy
+# From repo root - starts proxy + serves demo
+make demo-wasm
 
-# Terminal 2: Serve demo
-cd wasm && python3 -m http.server 8080
-
-# Browser: http://localhost:8080/demo/
+# Then open: http://localhost:8080/demo/minimal.html
 ```
+
+The demo shows:
+1. Connecting to a non-TEE server (google.com) fails attestation
+2. Connecting to a real TEE server succeeds with valid attestation

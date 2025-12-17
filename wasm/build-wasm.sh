@@ -14,3 +14,6 @@ OUT_DIR="${WASM_OUT_DIR:-pkg}"
 echo "Building ratls-wasm (target=${TARGET}, out-dir=${OUT_DIR})"
 cd "$WASM_DIR"
 wasm-pack build --target "$TARGET" --out-dir "$OUT_DIR" "$@"
+
+cp -f "$WASM_DIR/src/ratls-fetch.js" "$WASM_DIR/$OUT_DIR/" 2>/dev/null || true
+cp -f "$WASM_DIR/src/ratls-fetch.d.ts" "$WASM_DIR/$OUT_DIR/" 2>/dev/null || true
