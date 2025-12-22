@@ -19,10 +19,6 @@ Browser (ratls-fetch.js)          WASM (ratls_wasm)           Proxy             
         │◄─── {status,headers,body} ────│◄──── HTTP/1.1 res ────│◄──── raw ────────│
 ```
 
-HTTP parsing uses `httparse` in Rust, with full support for:
-- Content-Length responses
-- Chunked transfer encoding (critical for streaming LLM responses)
-- Proper handling of 204/304/1xx responses
 
 ## Building
 

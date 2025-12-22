@@ -1653,8 +1653,12 @@ name = "ratls-wasm"
 version = "0.1.0"
 dependencies = [
  "async_io_stream",
+ "bytes",
  "futures",
- "httparse",
+ "http",
+ "http-body-util",
+ "hyper",
+ "pin-project-lite",
  "ratls-core",
  "serde",
  "serde-wasm-bindgen",
