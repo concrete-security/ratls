@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>RA-TLS Minimal Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    h1 { margin-bottom: 8px; }
+    .subtitle { color: #666; margin-bottom: 24px; }
+    #output {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 20px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 14px;
+      white-space: pre-wrap;
+      min-height: 300px;
+    }
+  </style>
+</head>
+<body>
+  <h1>RA-TLS Minimal Demo</h1>
+  <p class="subtitle">Demonstrates that only TEE servers pass attestation</p>
+  <pre id="output"></pre>
+  <script type="module" src="minimal.js"></script>
+</body>
+</html>

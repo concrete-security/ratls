@@ -1,0 +1,31 @@
+[package]
+name = "ratls-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ratls-core = { path = "../core" }
+futures = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde = { workspace = true }
+serde-wasm-bindgen = "0.6"
+ws_stream_wasm = "0.7"
+async_io_stream = "0.3"
+wasm-streams = "0.4"
+web-sys = { version = "0.3", features = ["ReadableStream", "WritableStream", "ReadableStreamDefaultController"] }
+
+# HTTP client - using hyper
+hyper = { version = "1.6", default-features = false, features = ["client", "http1"] }
+http-body-util = "0.1"
+http = "1.3"
+bytes = "1.9"
+pin-project-lite = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+serde_json = { workspace = true }

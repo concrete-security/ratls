@@ -1,0 +1,173 @@
+/**
+ * RA-TLS Fetch - A fetch-compatible API for attested TLS connections.
+ *
+ * This module provides a fetch-like API that delegates HTTP handling to the
+ * WASM module (including chunked transfer encoding for streaming LLM responses).
+ */
+
+import init, { AttestedStream, RatlsHttp } from "./ratls_wasm.js";
+
+// ============================================================================
+// WASM Initialization
+// ============================================================================
+
+let wasmReady;
+
+async function ensureWasm() {
+  if (!wasmReady) {
+    wasmReady = init();
+  }
+  return wasmReady;
+}
+
+// ============================================================================
+// URL Helpers
+// ============================================================================
+
+function isLoopbackHostname(host) {
+  const value = host?.toLowerCase?.() || "";
+  return value === "localhost" || value === "127.0.0.1" || value === "::1" || value.startsWith("127.");
+}
+
+function normalizeProxyUrl(raw) {
+  if (!raw) return "";
+  const candidate = /^wss?:\/\//i.test(raw) ? raw : `ws://${raw.replace(/^\/+/, "")}`;
+  try {
+    const url = new URL(candidate);
+    const isProd = typeof process !== "undefined" && process?.env?.NODE_ENV === "production";
+    if (isProd && url.protocol !== "wss:" && !isLoopbackHostname(url.hostname)) {
+      throw new Error("RA-TLS proxy URL must use wss:// in production");
+    }
+    return url.toString();
+  } catch (error) {
+    if (error instanceof Error && /must use wss/i.test(error.message || "")) {
+      throw error;
+    }
+    return candidate;
+  }
+}
+
+function normalizeTarget(value) {
+  if (!value) return "";
+  return value.includes(":") ? value : `${value}:443`;
+}
+
+function buildProxyUrl(base, target) {
+  const url = new URL(normalizeProxyUrl(base));
+  if (target) {
+    url.searchParams.set("target", target);
+  }
+  return url.toString();
+}
+
+// ============================================================================
+// Main API
+// ============================================================================
+
+/**
+ * Create a fetch-compatible function for attested TLS connections.
+ *
+ * @param {Object} options
+ * @param {string} options.proxyUrl - WebSocket proxy URL (e.g., "ws://127.0.0.1:9000")
+ * @param {string} options.targetHost - Target TEE server (e.g., "vllm.example.com:443")
+ * @param {string} [options.serverName] - TLS server name (defaults to hostname from targetHost)
+ * @param {Object} [options.defaultHeaders] - Default headers to include in all requests
+ * @param {Function} [options.onAttestation] - Callback when attestation is received
+ * @returns {Function} A fetch-compatible async function
+ */
+export function createRatlsFetch(options) {
+  const { proxyUrl, targetHost, serverName, defaultHeaders, onAttestation } = options;
+
+  if (!proxyUrl || !targetHost) {
+    throw new Error("proxyUrl and targetHost are required for RA-TLS fetch");
+  }
+
+  const normalizedTarget = normalizeTarget(targetHost);
+  const sni = serverName || normalizedTarget.split(":")[0];
+  const host = normalizedTarget.split(":")[1] === "443"
+    ? normalizedTarget.split(":")[0]
+    : normalizedTarget;
+  const wsUrl = buildProxyUrl(proxyUrl, normalizedTarget);
+  const base = new URL(`https://${normalizedTarget}`);
+
+  return async function ratlsFetch(input, init = {}) {
+    await ensureWasm();
+
+    // Connect and perform RA-TLS handshake
+    const http = await RatlsHttp.connect(wsUrl, sni);
+
+    // Get attestation and notify callback
+    const attestation = http.attestation();
+    if (onAttestation && typeof onAttestation === "function") {
+      try {
+        await onAttestation(attestation);
+      } catch (e) {
+        console.error("[ratls-fetch] onAttestation callback failed:", e);
+        throw e;
+      }
+    }
+
+    // Build request from input
+    const request = new Request(input, init);
+    const url = new URL(request.url, base);
+    const path = `${url.pathname}${url.search}`;
+
+    // Merge headers (default + request headers)
+    const mergedHeaders = [];
+    if (defaultHeaders) {
+      for (const [name, value] of Object.entries(defaultHeaders)) {
+        mergedHeaders.push([name, value]);
+      }
+    }
+    request.headers.forEach((value, name) => {
+      // Override default headers with request headers
+      const idx = mergedHeaders.findIndex(([n]) => n.toLowerCase() === name.toLowerCase());
+      if (idx >= 0) {
+        mergedHeaders[idx] = [name, value];
+      } else {
+        mergedHeaders.push([name, value]);
+      }
+    });
+
+    // Get body as Uint8Array
+    let body = null;
+    if (request.body) {
+      body = new Uint8Array(await request.arrayBuffer());
+    }
+
+    // Perform HTTP request via WASM (handles chunked encoding)
+    const result = await http.fetch(
+      request.method,
+      path,
+      host,
+      mergedHeaders,
+      body
+    );
+
+    // Convert headers object to Headers instance
+    const responseHeaders = new Headers();
+    for (const [name, value] of Object.entries(result.headers)) {
+      responseHeaders.append(name, value);
+    }
+
+    // Create Response object with body stream from WASM
+    const response = new Response(result.body, {
+      status: result.status,
+      statusText: result.statusText,
+      headers: responseHeaders
+    });
+
+    // Attach attestation as non-enumerable property
+    Object.defineProperty(response, "attestation", {
+      value: attestation,
+      enumerable: false,
+      configurable: false,
+      writable: false
+    });
+
+    return response;
+  };
+}
+
+// Re-export for advanced usage
+export { init, AttestedStream, RatlsHttp };
