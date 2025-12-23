@@ -117,6 +117,12 @@ impl AttestedStream {
         .await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
+        if !att.trusted {
+            return Err(JsValue::from_str(
+                "Attestation verification failed: connection reported as untrusted",
+            ));
+        }
+
         let (reader, writer) = tls.split();
 
         let readable = create_readable_stream(reader);
@@ -216,6 +222,12 @@ impl RatlsHttp {
         )
         .await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        if !att.trusted {
+            return Err(JsValue::from_str(
+                "Attestation verification failed: connection reported as untrusted",
+            ));
+        }
 
         Ok(RatlsHttp {
             tls_stream: Rc::new(RefCell::new(Some(tls))),

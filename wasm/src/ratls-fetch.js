@@ -100,9 +100,10 @@ export function createRatlsFetch(options) {
     const attestation = http.attestation();
     if (onAttestation && typeof onAttestation === "function") {
       try {
-        onAttestation(attestation);
+        await onAttestation(attestation);
       } catch (e) {
-        console.warn("[ratls-fetch] onAttestation callback failed:", e);
+        console.error("[ratls-fetch] onAttestation callback failed:", e);
+        throw e;
       }
     }
 
