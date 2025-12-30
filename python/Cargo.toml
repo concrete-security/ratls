@@ -1,0 +1,23 @@
+[package]
+name = "ratls-python"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "ratls"
+crate-type = ["cdylib"]
+
+[dependencies]
+ratls-core = { path = "../core" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util"] }
+hex = "0.4"
+dcap-qvl = "0.3"
+serde_json = { workspace = true }
+serde = { workspace = true }
+getrandom = "0.2"
+pythonize = "0.23"
+
+[build-dependencies]
+pyo3-build-config = "0.23"

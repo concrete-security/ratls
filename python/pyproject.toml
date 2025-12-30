@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ratls"
+version = "0.1.0"
+description = "Python bindings for RATLS attestation verification"
+requires-python = ">=3.10"
+
+[dependency-groups]
+test = [
+    "pytest",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "."
+module-name = "ratls._ratls"

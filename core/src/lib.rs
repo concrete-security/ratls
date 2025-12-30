@@ -15,9 +15,9 @@ use rustls::crypto::aws_lc_rs;
 use rustls::crypto::ring;
 
 mod protocol;
-mod tdx;
+pub mod tdx;
 
-pub use tdx::TdxTcbPolicy;
+pub use tdx::{TcgEvent, TdxTcbPolicy};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod platform {
