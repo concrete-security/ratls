@@ -17,10 +17,7 @@ use futures::AsyncReadExt;
 use http_body_util::{BodyExt, Full};
 use hyper::client::conn::http1;
 use hyper::Request;
-use ratls_core::{
-    platform::{AsyncWriteExt, TlsStream},
-    ratls_connect, Policy,
-};
+use ratls_core::{ratls_connect, AsyncWriteExt, Policy, TlsStream};
 use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::prelude::*;
@@ -108,7 +105,7 @@ impl AttestedStream {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         // 2. Perform RA-TLS handshake
-        let (tls, att) = ratls_connect(
+        let (tls, report) = ratls_connect(
             ws_stream.into_io(),
             server_name,
             Policy::default(),
@@ -117,12 +114,6 @@ impl AttestedStream {
         .await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        if !att.trusted {
-            return Err(JsValue::from_str(
-                "Attestation verification failed: connection reported as untrusted",
-            ));
-        }
-
         let (reader, writer) = tls.split();
 
         let readable = create_readable_stream(reader);
@@ -130,10 +121,10 @@ impl AttestedStream {
         Ok(AttestedStream {
             writer: Rc::new(RefCell::new(Some(writer))),
             attestation: AttestationSummary {
-                trusted: att.trusted,
-                tee_type: format!("{:?}", att.tee_type),
-                tcb_status: att.tcb_status,
-                advisory_ids: att.advisory_ids,
+                trusted: true,
+                tee_type: "Tdx".to_string(),
+                tcb_status: report.status.clone(),
+                advisory_ids: report.advisory_ids.clone(),
             },
             readable,
         })
@@ -214,7 +205,7 @@ impl RatlsHttp {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        let (tls, att) = ratls_connect(
+        let (tls, report) = ratls_connect(
             ws_stream.into_io(),
             server_name,
             Policy::default(),
@@ -223,19 +214,13 @@ impl RatlsHttp {
         .await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        if !att.trusted {
-            return Err(JsValue::from_str(
-                "Attestation verification failed: connection reported as untrusted",
-            ));
-        }
-
         Ok(RatlsHttp {
             tls_stream: Rc::new(RefCell::new(Some(tls))),
             attestation: AttestationSummary {
-                trusted: att.trusted,
-                tee_type: format!("{:?}", att.tee_type),
-                tcb_status: att.tcb_status,
-                advisory_ids: att.advisory_ids,
+                trusted: true,
+                tee_type: "Tdx".to_string(),
+                tcb_status: report.status.clone(),
+                advisory_ids: report.advisory_ids.clone(),
             },
         })
     }
