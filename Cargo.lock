@@ -1727,6 +1727,7 @@ dependencies = [
  "futures-rustls",
  "getrandom 0.2.16",
  "hex",
+ "js-sys",
  "log",
  "rand 0.8.5",
  "reqwest",

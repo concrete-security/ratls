@@ -5,8 +5,8 @@ pub mod config;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use dcap_qvl::collateral::get_collateral_and_verify;
-use dcap_qvl::verify::VerifiedReport;
+use dcap_qvl::collateral::get_collateral;
+use dcap_qvl::verify::{verify, VerifiedReport};
 use dstack_sdk_types::dstack::{EventLog, GetQuoteResponse, TcbInfo};
 use sha2::{Digest, Sha256};
 
@@ -68,10 +68,30 @@ impl DstackTDXVerifier {
 
     /// Verify quote using dcap-qvl directly.
     async fn verify_quote(&self, quote: &[u8]) -> Result<VerifiedReport, RatlsVerificationError> {
-        let pccs_url = self.config.pccs_url.as_deref();
+        let pccs_url = self.config.pccs_url.as_deref().unwrap_or_default();
+        let pccs_url = if pccs_url.is_empty() {
+            "https://api.trustedservices.intel.com"
+        } else {
+            pccs_url
+        };
 
-        let report = get_collateral_and_verify(quote, pccs_url)
+        // Get collateral from PCCS
+        let collateral = get_collateral(pccs_url, quote)
             .await
+            .map_err(|e| RatlsVerificationError::Quote(format!("Failed to get collateral: {}", e)))?;
+
+        // Get current time - platform specific
+        #[cfg(not(target_arch = "wasm32"))]
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| RatlsVerificationError::Quote(format!("Failed to get current time: {}", e)))?
+            .as_secs();
+
+        #[cfg(target_arch = "wasm32")]
+        let now_secs = (js_sys::Date::now() / 1000.0) as u64;
+
+        // Verify the quote
+        let report = verify(quote, &collateral, now_secs)
             .map_err(|e| RatlsVerificationError::Quote(format!("DCAP verification failed: {}", e)))?;
 
         // Check TCB status
