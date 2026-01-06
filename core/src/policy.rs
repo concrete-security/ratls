@@ -5,6 +5,8 @@
 //! making them easy to load from JSON configuration files.
 
 use crate::dstack::DstackTdxPolicy;
+use crate::error::RatlsVerificationError;
+use crate::verifier::{IntoVerifier, Verifier};
 use serde::{Deserialize, Serialize};
 
 /// Attestation policy determining which verifier to use and its configuration.
@@ -35,6 +37,29 @@ pub enum Policy {
 impl Default for Policy {
     fn default() -> Self {
         Policy::DstackTdx(DstackTdxPolicy::default())
+    }
+}
+
+impl Policy {
+    /// Convert this policy into its corresponding verifier.
+    ///
+    /// This delegates to the underlying policy variant's [`IntoVerifier`] implementation,
+    /// wrapping the result in the [`Verifier`] enum for type-safe polymorphism.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ratls_core::{Policy, DstackTdxPolicy};
+    ///
+    /// let policy = Policy::DstackTdx(DstackTdxPolicy::dev());
+    /// let verifier = policy.into_verifier().unwrap();
+    /// ```
+    pub fn into_verifier(self) -> Result<Verifier, RatlsVerificationError> {
+        match self {
+            Policy::DstackTdx(policy) => {
+                Ok(Verifier::DstackTdx(policy.into_verifier()?))
+            }
+        }
     }
 }
 

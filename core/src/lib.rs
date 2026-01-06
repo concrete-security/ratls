@@ -31,7 +31,12 @@
 //! let policy = Policy::DstackTdx(DstackTdxPolicy::dev());
 //! let (tls_stream, report) = ratls_connect(tcp, "tee.example.com", policy, None).await?;
 //!
-//! println!("TCB Status: {}", report.status);
+//! // Access report data via pattern matching
+//! match &report {
+//!     ratls_core::Report::Tdx(tdx_report) => {
+//!         println!("TCB Status: {}", tdx_report.status);
+//!     }
+//! }
 //! # Ok(())
 //! # }
 //! ```
@@ -63,7 +68,11 @@
 //! # let mut tls_stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream> = todo!();
 //! # let peer_cert: Vec<u8> = todo!();
 //! let report = verifier.verify(&mut tls_stream, &peer_cert, "hostname").await?;
-//! println!("TCB Status: {}", report.status);
+//! match &report {
+//!     ratls_core::Report::Tdx(tdx_report) => {
+//!         println!("TCB Status: {}", tdx_report.status);
+//!     }
+//! }
 //! # Ok(())
 //! # }
 //! ```
@@ -88,7 +97,10 @@ pub use tdx::{ExpectedBootchain, TCB_STATUS_LIST};
 
 // Low-level API
 pub use error::RatlsVerificationError;
-pub use verifier::{AsyncByteStream, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, RatlsVerifier};
+pub use verifier::{
+    AsyncByteStream, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, IntoVerifier, RatlsVerifier,
+    Report, Verifier,
+};
 
 // Re-export VerifiedReport from dcap-qvl for bindings
 pub use dcap_qvl::verify::VerifiedReport;

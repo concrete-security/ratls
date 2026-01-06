@@ -2,6 +2,7 @@
 
 use crate::dstack::{DstackTDXVerifier, DstackTDXVerifierBuilder};
 use crate::tdx::ExpectedBootchain;
+use crate::verifier::IntoVerifier;
 use crate::RatlsVerificationError;
 use serde::{Deserialize, Serialize};
 
@@ -72,9 +73,12 @@ impl DstackTdxPolicy {
             ..Default::default()
         }
     }
+}
 
-    /// Convert this policy into a DstackTDXVerifier.
-    pub(crate) fn into_verifier(self) -> Result<DstackTDXVerifier, RatlsVerificationError> {
+impl IntoVerifier for DstackTdxPolicy {
+    type Verifier = DstackTDXVerifier;
+
+    fn into_verifier(self) -> Result<DstackTDXVerifier, RatlsVerificationError> {
         let mut builder = DstackTDXVerifierBuilder::new();
 
         // If no bootchain/app_compose/os_image specified, disable runtime verification

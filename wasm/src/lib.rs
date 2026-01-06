@@ -118,14 +118,18 @@ impl AttestedStream {
 
         let readable = create_readable_stream(reader);
 
-        Ok(AttestedStream {
-            writer: Rc::new(RefCell::new(Some(writer))),
-            attestation: AttestationSummary {
+        let attestation = match &report {
+            ratls_core::Report::Tdx(verified) => AttestationSummary {
                 trusted: true,
                 tee_type: "Tdx".to_string(),
-                tcb_status: report.status.clone(),
-                advisory_ids: report.advisory_ids.clone(),
+                tcb_status: verified.status.clone(),
+                advisory_ids: verified.advisory_ids.clone(),
             },
+        };
+
+        Ok(AttestedStream {
+            writer: Rc::new(RefCell::new(Some(writer))),
+            attestation,
             readable,
         })
     }
@@ -214,14 +218,18 @@ impl RatlsHttp {
         .await
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        Ok(RatlsHttp {
-            tls_stream: Rc::new(RefCell::new(Some(tls))),
-            attestation: AttestationSummary {
+        let attestation = match &report {
+            ratls_core::Report::Tdx(verified) => AttestationSummary {
                 trusted: true,
                 tee_type: "Tdx".to_string(),
-                tcb_status: report.status.clone(),
-                advisory_ids: report.advisory_ids.clone(),
+                tcb_status: verified.status.clone(),
+                advisory_ids: verified.advisory_ids.clone(),
             },
+        };
+
+        Ok(RatlsHttp {
+            tls_stream: Rc::new(RefCell::new(Some(tls))),
+            attestation,
         })
     }
 

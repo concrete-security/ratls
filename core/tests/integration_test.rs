@@ -213,7 +213,11 @@ mod integration {
             result.err()
         );
         let report = result.unwrap();
-        println!("Verification passed! TCB Status: {}", report.status);
+        match &report {
+            ratls_core::Report::Tdx(tdx_report) => {
+                println!("Verification passed! TCB Status: {}", tdx_report.status);
+            }
+        }
 
         println!("Verification with disabled runtime verification passed!");
     }
@@ -246,7 +250,11 @@ mod integration {
         // The important thing is that the verifier runs the full verification
         match &result {
             Ok(report) => {
-                println!("Full verification passed! TCB Status: {}", report.status);
+                match report {
+                    ratls_core::Report::Tdx(tdx_report) => {
+                        println!("Full verification passed! TCB Status: {}", tdx_report.status);
+                    }
+                }
             }
             Err(RatlsVerificationError::AppComposeHashMismatch { expected, actual }) => {
                 println!(
@@ -426,7 +434,11 @@ mod integration {
         // The important thing is that the verifier runs the full verification
         match &result {
             Ok((_, report)) => {
-                println!("ratls_connect full verification passed! TCB Status: {}", report.status);
+                match report {
+                    ratls_core::Report::Tdx(tdx_report) => {
+                        println!("ratls_connect full verification passed! TCB Status: {}", tdx_report.status);
+                    }
+                }
             }
             Err(ratls_core::RatlsVerificationError::AppComposeHashMismatch { expected, actual }) => {
                 println!(
@@ -471,7 +483,11 @@ mod integration {
         // This might fail if app_compose doesn't match - that's expected
         match &result {
             Ok((_, report)) => {
-                println!("ratls_connect with ALPN passed! TCB Status: {}", report.status);
+                match report {
+                    ratls_core::Report::Tdx(tdx_report) => {
+                        println!("ratls_connect with ALPN passed! TCB Status: {}", tdx_report.status);
+                    }
+                }
             }
             Err(ratls_core::RatlsVerificationError::AppComposeHashMismatch { expected, actual }) => {
                 println!(

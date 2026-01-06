@@ -5,9 +5,8 @@
 
 use crate::error::RatlsVerificationError;
 use crate::policy::Policy;
-use crate::verifier::AsyncByteStream;
+use crate::verifier::{AsyncByteStream, Report};
 use crate::RatlsVerifier;
-use dcap_qvl::verify::VerifiedReport;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
@@ -94,7 +93,7 @@ where
 ///
 /// # Returns
 ///
-/// A tuple of (TlsStream, VerifiedReport) on success.
+/// A tuple of (TlsStream, Report) on success.
 ///
 /// # Example
 ///
@@ -105,7 +104,11 @@ where
 /// let tcp = tokio::net::TcpStream::connect("tee.example.com:443").await?;
 /// let policy = Policy::DstackTdx(DstackTdxPolicy::dev());
 /// let (tls_stream, report) = ratls_connect(tcp, "tee.example.com", policy, None).await?;
-/// println!("TCB Status: {}", report.status);
+/// match &report {
+///     ratls_core::Report::Tdx(tdx_report) => {
+///         println!("TCB Status: {}", tdx_report.status);
+///     }
+/// }
 /// # Ok(())
 /// # }
 /// ```
@@ -114,20 +117,16 @@ pub async fn ratls_connect<S>(
     server_name: &str,
     policy: Policy,
     alpn: Option<Vec<String>>,
-) -> Result<(TlsStream<S>, VerifiedReport), RatlsVerificationError>
+) -> Result<(TlsStream<S>, Report), RatlsVerificationError>
 where
     S: AsyncByteStream + 'static,
 {
     let (mut tls_stream, peer_cert) = tls_handshake(stream, server_name, alpn).await?;
 
-    let report = match policy {
-        Policy::DstackTdx(tdx_policy) => {
-            let verifier = tdx_policy.into_verifier()?;
-            verifier
-                .verify(&mut tls_stream, &peer_cert, server_name)
-                .await?
-        }
-    };
+    let verifier = policy.into_verifier()?;
+    let report = verifier
+        .verify(&mut tls_stream, &peer_cert, server_name)
+        .await?;
 
     Ok((tls_stream, report))
 }

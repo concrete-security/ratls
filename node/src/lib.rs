@@ -3,7 +3,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use ratls_core::{
-    ratls_connect as core_ratls_connect, Policy, TlsStream as CoreTlsStream, VerifiedReport,
+    ratls_connect as core_ratls_connect, Policy, Report, TlsStream as CoreTlsStream,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -24,14 +24,16 @@ pub struct JsAttestation {
     pub advisory_ids: Vec<String>,
 }
 
-impl From<VerifiedReport> for JsAttestation {
-    fn from(report: VerifiedReport) -> Self {
-        Self {
-            trusted: true, // Success implies trusted
-            tee_type: "tdx".to_string(),
-            measurement: None, // VerifiedReport doesn't expose this directly
-            tcb_status: report.status.clone(),
-            advisory_ids: report.advisory_ids.clone(),
+impl From<Report> for JsAttestation {
+    fn from(report: Report) -> Self {
+        match report {
+            Report::Tdx(verified) => Self {
+                trusted: true, // Success implies trusted
+                tee_type: "tdx".to_string(),
+                measurement: None, // VerifiedReport doesn't expose this directly
+                tcb_status: verified.status.clone(),
+                advisory_ids: verified.advisory_ids.clone(),
+            },
         }
     }
 }

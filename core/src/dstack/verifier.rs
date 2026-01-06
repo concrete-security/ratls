@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::dstack::compose_hash::get_compose_hash;
 use crate::dstack::config::DstackTDXVerifierConfig;
 use crate::error::RatlsVerificationError;
-use crate::verifier::{AsyncByteStream, AsyncReadExt, AsyncWriteExt, RatlsVerifier};
+use crate::verifier::{AsyncByteStream, AsyncReadExt, AsyncWriteExt, RatlsVerifier, Report};
 
 pub use crate::dstack::config::DstackTDXVerifierBuilder;
 
@@ -274,71 +274,12 @@ impl DstackTDXVerifier {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RatlsVerifier for DstackTDXVerifier {
-    type Report = VerifiedReport;
-
     async fn verify<S>(
         &self,
         stream: &mut S,
         peer_cert: &[u8],
         hostname: &str,
-    ) -> Result<Self::Report, RatlsVerificationError>
-    where
-        S: AsyncByteStream + Send,
-    {
-        // 1. Generate nonce and get quote via HTTP POST to /tdx_quote
-        let mut report_data = [0u8; 64];
-        rand::Rng::fill(&mut rand::thread_rng(), &mut report_data);
-        let (quote_response, tcb_info) = get_quote_over_http(stream, &report_data, hostname).await?;
-
-        // 2. Parse event log using dstack-sdk-types
-        let events = quote_response
-            .decode_event_log()
-            .map_err(|e| RatlsVerificationError::Other(e.into()))?;
-
-        // 3. Verify certificate in event log
-        if !self.verify_cert_in_eventlog(peer_cert, &events) {
-            return Err(RatlsVerificationError::CertificateNotInEventLog);
-        }
-
-        // 4. Verify DCAP quote using dcap-qvl directly
-        let quote_bytes = quote_response
-            .decode_quote()
-            .map_err(|e| RatlsVerificationError::Other(anyhow::anyhow!("Failed to decode quote: {}", e)))?;
-
-        // Async quote verification - no blocking!
-        let verified_report = self.verify_quote(&quote_bytes).await?;
-
-        // 5. Verify RTMR replay using dstack-sdk's replay_rtmrs()
-        self.verify_rtmr_replay(&quote_response, &tcb_info)?;
-
-        // Skip remaining checks if runtime verification is disabled
-        if self.config.disable_runtime_verification {
-            return Ok(verified_report);
-        }
-
-        // 6. Verify bootchain (MRTD, RTMR0-2)
-        self.verify_bootchain(&tcb_info)?;
-
-        // 7. Verify app compose hash
-        self.verify_app_compose(&tcb_info, &events)?;
-
-        // 8. Verify OS image hash
-        self.verify_os_image_hash(&tcb_info, &events)?;
-
-        Ok(verified_report)
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl RatlsVerifier for DstackTDXVerifier {
-    type Report = VerifiedReport;
-
-    async fn verify<S>(
-        &self,
-        stream: &mut S,
-        peer_cert: &[u8],
-        hostname: &str,
-    ) -> Result<Self::Report, RatlsVerificationError>
+    ) -> Result<Report, RatlsVerificationError>
     where
         S: AsyncByteStream,
     {
@@ -370,7 +311,7 @@ impl RatlsVerifier for DstackTDXVerifier {
 
         // Skip remaining checks if runtime verification is disabled
         if self.config.disable_runtime_verification {
-            return Ok(verified_report);
+            return Ok(Report::Tdx(verified_report));
         }
 
         // 6. Verify bootchain (MRTD, RTMR0-2)
@@ -382,7 +323,62 @@ impl RatlsVerifier for DstackTDXVerifier {
         // 8. Verify OS image hash
         self.verify_os_image_hash(&tcb_info, &events)?;
 
-        Ok(verified_report)
+        Ok(Report::Tdx(verified_report))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl RatlsVerifier for DstackTDXVerifier {
+    async fn verify<S>(
+        &self,
+        stream: &mut S,
+        peer_cert: &[u8],
+        hostname: &str,
+    ) -> Result<Report, RatlsVerificationError>
+    where
+        S: AsyncByteStream,
+    {
+        // 1. Generate nonce and get quote via HTTP POST to /tdx_quote
+        let mut report_data = [0u8; 64];
+        rand::Rng::fill(&mut rand::thread_rng(), &mut report_data);
+        let (quote_response, tcb_info) = get_quote_over_http(stream, &report_data, hostname).await?;
+
+        // 2. Parse event log using dstack-sdk-types
+        let events = quote_response
+            .decode_event_log()
+            .map_err(|e| RatlsVerificationError::Other(e.into()))?;
+
+        // 3. Verify certificate in event log
+        if !self.verify_cert_in_eventlog(peer_cert, &events) {
+            return Err(RatlsVerificationError::CertificateNotInEventLog);
+        }
+
+        // 4. Verify DCAP quote using dcap-qvl directly
+        let quote_bytes = quote_response
+            .decode_quote()
+            .map_err(|e| RatlsVerificationError::Other(anyhow::anyhow!("Failed to decode quote: {}", e)))?;
+
+        // Async quote verification - no blocking!
+        let verified_report = self.verify_quote(&quote_bytes).await?;
+
+        // 5. Verify RTMR replay using dstack-sdk's replay_rtmrs()
+        self.verify_rtmr_replay(&quote_response, &tcb_info)?;
+
+        // Skip remaining checks if runtime verification is disabled
+        if self.config.disable_runtime_verification {
+            return Ok(Report::Tdx(verified_report));
+        }
+
+        // 6. Verify bootchain (MRTD, RTMR0-2)
+        self.verify_bootchain(&tcb_info)?;
+
+        // 7. Verify app compose hash
+        self.verify_app_compose(&tcb_info, &events)?;
+
+        // 8. Verify OS image hash
+        self.verify_os_image_hash(&tcb_info, &events)?;
+
+        Ok(Report::Tdx(verified_report))
     }
 }
 
