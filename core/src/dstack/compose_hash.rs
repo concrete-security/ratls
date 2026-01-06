@@ -45,7 +45,7 @@ fn sort_object(value: Value) -> Value {
 ///
 /// ```
 /// use serde_json::json;
-/// use ratls_core::compose_hash::get_compose_hash;
+/// use ratls_core::dstack::compose_hash::get_compose_hash;
 ///
 /// let compose = json!({
 ///     "runner": "docker-compose",

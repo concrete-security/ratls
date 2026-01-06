@@ -39,7 +39,8 @@
 //! # Low-Level Example
 //!
 //! ```no_run
-//! use ratls_core::{DstackTDXVerifier, ExpectedBootchain, RatlsVerifier};
+//! use ratls_core::{DstackTDXVerifier, RatlsVerifier};
+//! use ratls_core::tdx::ExpectedBootchain;
 //! use serde_json::json;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,8 +68,8 @@
 //! # }
 //! ```
 
-pub mod compose_hash;
 pub mod connect;
+pub mod dstack;
 pub mod error;
 pub mod policy;
 pub mod tdx;
@@ -76,11 +77,17 @@ pub mod verifier;
 
 // High-level API
 pub use connect::{ratls_connect, tls_handshake, TlsStream};
-pub use policy::{DstackTdxPolicy, Policy};
+pub use policy::Policy;
+
+// Dstack-specific (backward compatible re-exports)
+// NOTE: compose_hash NOT exposed at root - access via dstack::compose_hash
+pub use dstack::{DstackTDXVerifier, DstackTDXVerifierBuilder, DstackTDXVerifierConfig, DstackTdxPolicy};
+
+// Generic TDX
+pub use tdx::{ExpectedBootchain, TCB_STATUS_LIST};
 
 // Low-level API
 pub use error::RatlsVerificationError;
-pub use tdx::{DstackTDXVerifier, DstackTDXVerifierBuilder, DstackTDXVerifierConfig, ExpectedBootchain};
 pub use verifier::{AsyncByteStream, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, RatlsVerifier};
 
 // Re-export VerifiedReport from dcap-qvl for bindings

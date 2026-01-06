@@ -3,7 +3,7 @@
 //! These tests verify real TDX attestation against a live dstack deployment.
 
 use ratls_core::{
-    compose_hash::get_compose_hash, DstackTDXVerifierBuilder, ExpectedBootchain,
+    dstack::compose_hash::get_compose_hash, DstackTDXVerifierBuilder, ExpectedBootchain,
     RatlsVerificationError,
 };
 use serde_json::json;
