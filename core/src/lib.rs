@@ -20,6 +20,9 @@
 //! - **OS Image Verification**: Verify the OS image hash
 //! - **Certificate Binding**: Verify TLS certificate is bound to the TEE
 //!
+//! For architecture details and how to extend with new TEE verifiers, see
+//! [ARCHITECTURE.md](https://github.com/anthropics/ratls/blob/main/core/ARCHITECTURE.md).
+//!
 //! # High-Level Example
 //!
 //! ```no_run
