@@ -1,10 +1,12 @@
 //! DstackTDXVerifier implementation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 use dcap_qvl::collateral::get_collateral;
+use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::{verify, VerifiedReport};
+use dcap_qvl::QuoteCollateralV3;
 use dstack_sdk_types::dstack::{EventLog, GetQuoteResponse, TcbInfo};
 use log::debug;
 use sha2::{Digest, Sha256};
@@ -15,6 +17,9 @@ use crate::error::RatlsVerificationError;
 use crate::verifier::{AsyncByteStream, AsyncReadExt, AsyncWriteExt, RatlsVerifier, Report};
 
 pub use crate::dstack::config::DstackTDXVerifierBuilder;
+
+/// Cache key for collateral: (pccs_url, fmspc, ca)
+type CollateralCacheKey = (String, String, &'static str);
 
 /// Response from the /tdx_quote endpoint.
 #[derive(Debug, serde::Deserialize)]
@@ -35,8 +40,8 @@ struct QuoteEndpointResponse {
 /// 7. Verify OS image hash
 pub struct DstackTDXVerifier {
     config: DstackTDXVerifierConfig,
-    /// Cached verified report (if cache_collateral is true)
-    cached_report: Arc<RwLock<Option<VerifiedReport>>>,
+    /// Cached collateral keyed by (pccs_url, fmspc, ca)
+    cached_collateral: Arc<RwLock<HashMap<CollateralCacheKey, QuoteCollateralV3>>>,
 }
 
 impl DstackTDXVerifier {
@@ -57,7 +62,7 @@ impl DstackTDXVerifier {
         }
         Ok(Self {
             config,
-            cached_report: Arc::new(RwLock::new(None)),
+            cached_collateral: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -75,12 +80,57 @@ impl DstackTDXVerifier {
             pccs_url
         };
 
-        debug!("Fetching collateral from {}", pccs_url);
+        // Parse quote to get cache key components (FMSPC and CA)
+        let parsed_quote = Quote::parse(quote)
+            .map_err(|e| RatlsVerificationError::Quote(format!("Failed to parse quote: {}", e)))?;
+        let fmspc = hex::encode_upper(
+            parsed_quote
+                .fmspc()
+                .map_err(|e| RatlsVerificationError::Quote(format!("Failed to get FMSPC: {}", e)))?,
+        );
+        let ca = parsed_quote
+            .ca()
+            .map_err(|e| RatlsVerificationError::Quote(format!("Failed to get CA: {}", e)))?;
 
-        // Get collateral from PCCS
-        let collateral = get_collateral(pccs_url, quote)
-            .await
-            .map_err(|e| RatlsVerificationError::Quote(format!("Failed to get collateral: {}", e)))?;
+        let cache_key = (pccs_url.to_string(), fmspc.clone(), ca);
+
+        // Try to get collateral from cache
+        let cached = if self.config.cache_collateral {
+            if let Ok(guard) = self.cached_collateral.read() {
+                guard.get(&cache_key).cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let collateral = match cached {
+            Some(c) => {
+                debug!(
+                    "Using cached collateral for PCCS={}, FMSPC={}, CA={}",
+                    pccs_url, fmspc, ca
+                );
+                c
+            }
+            None => {
+                debug!("Fetching collateral from {}", pccs_url);
+                let c = get_collateral(pccs_url, quote)
+                    .await
+                    .map_err(|e| {
+                        RatlsVerificationError::Quote(format!("Failed to get collateral: {}", e))
+                    })?;
+
+                // Cache if enabled
+                if self.config.cache_collateral {
+                    if let Ok(mut guard) = self.cached_collateral.write() {
+                        debug!("Caching collateral for FMSPC={}, CA={}", fmspc, ca);
+                        guard.insert(cache_key, c.clone());
+                    }
+                }
+                c
+            }
+        };
 
         debug!("Collateral received, verifying DCAP quote");
 
@@ -88,7 +138,9 @@ impl DstackTDXVerifier {
         #[cfg(not(target_arch = "wasm32"))]
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| RatlsVerificationError::Quote(format!("Failed to get current time: {}", e)))?
+            .map_err(|e| {
+                RatlsVerificationError::Quote(format!("Failed to get current time: {}", e))
+            })?
             .as_secs();
 
         #[cfg(target_arch = "wasm32")]
@@ -117,13 +169,6 @@ impl DstackTDXVerifier {
                 status: report.status.clone(),
                 allowed: self.config.allowed_tcb_status.clone(),
             });
-        }
-
-        // Cache if enabled
-        if self.config.cache_collateral {
-            if let Ok(mut guard) = self.cached_report.write() {
-                *guard = Some(report.clone());
-            }
         }
 
         Ok(report)

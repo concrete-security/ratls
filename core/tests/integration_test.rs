@@ -343,6 +343,32 @@ mod integration {
         println!("Multiple verifications with same verifier instance passed!");
     }
 
+    /// Test that collateral caching works correctly across multiple verifications.
+    #[tokio::test]
+    async fn test_collateral_caching() {
+        let verifier = DstackTDXVerifierBuilder::new()
+            .disable_runtime_verification()
+            .allowed_tcb_status(vec![
+                "UpToDate".to_string(),
+                "SWHardeningNeeded".to_string(),
+            ])
+            .cache_collateral(true)
+            .build()
+            .expect("Failed to build verifier");
+
+        // First verification - fetches collateral from PCCS
+        let (mut stream1, peer_cert1) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (1)");
+        let result1 = verifier.verify(&mut stream1, &peer_cert1, TEST_HOST).await;
+        assert!(result1.is_ok(), "First verification failed: {:?}", result1.err());
+
+        // Second verification - uses cached collateral
+        let (mut stream2, peer_cert2) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (2)");
+        let result2 = verifier.verify(&mut stream2, &peer_cert2, TEST_HOST).await;
+        assert!(result2.is_ok(), "Second verification (cached) failed: {:?}", result2.err());
+
+        println!("Collateral caching test passed!");
+    }
+
     /// Test using the async verifier from synchronous code.
     /// This demonstrates how to use the async API with a blocking runtime wrapper.
     #[test]
