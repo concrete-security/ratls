@@ -22,9 +22,12 @@ pub use crate::dstack::config::DstackTDXVerifierBuilder;
 type CollateralCacheKey = (String, String, &'static str);
 
 /// Response from the /tdx_quote endpoint.
+///
+/// Note: `tcb_info` is included for deserialization but not used for verification.
 #[derive(Debug, serde::Deserialize)]
 struct QuoteEndpointResponse {
     quote: GetQuoteResponse,
+    #[allow(dead_code)]
     tcb_info: TcbInfo,
 }
 
@@ -174,47 +177,63 @@ impl DstackTDXVerifier {
         Ok(report)
     }
 
-    /// Verify bootchain measurements (MRTD, RTMR0-2) using TcbInfo from dstack-sdk.
+    /// Verify bootchain measurements (MRTD, RTMR0-2) using the trusted verified report.
+    ///
+    /// Compares the cryptographically verified measurements from the report
+    /// against the expected bootchain configuration.
     ///
     /// Fails if `expected_bootchain` is not configured.
-    fn verify_bootchain(&self, tcb_info: &TcbInfo) -> Result<(), RatlsVerificationError> {
+    fn verify_bootchain(
+        &self,
+        verified_report: &VerifiedReport,
+    ) -> Result<(), RatlsVerificationError> {
         let bootchain = self.config.expected_bootchain.as_ref().ok_or_else(|| {
             RatlsVerificationError::Configuration("expected_bootchain is required".into())
         })?;
 
-        debug!("Verifying bootchain measurements");
+        // Get the trusted TD report from DCAP verification
+        let td_report = verified_report.report.as_td10().ok_or_else(|| {
+            RatlsVerificationError::Other(anyhow::anyhow!(
+                "Expected TDX report but got SGX enclave report"
+            ))
+        })?;
 
-        // Check MRTD (TcbInfo fields are already strings)
+        debug!("Verifying bootchain measurements against verified report");
+
+        // Check MRTD (convert from bytes to hex string)
+        let actual_mrtd = hex::encode(td_report.mr_td);
         debug!("MRTD expected: {}", bootchain.mrtd);
-        debug!("MRTD actual:   {}", tcb_info.mrtd);
-        let mrtd_match = tcb_info.mrtd == bootchain.mrtd;
+        debug!("MRTD actual:   {}", actual_mrtd);
+        let mrtd_match = actual_mrtd == bootchain.mrtd;
         debug!("MRTD match: {}", mrtd_match);
 
         if !mrtd_match {
             return Err(RatlsVerificationError::BootchainMismatch {
                 field: "mrtd".into(),
                 expected: bootchain.mrtd.clone(),
-                actual: tcb_info.mrtd.clone(),
+                actual: actual_mrtd,
             });
         }
 
-        // Check RTMR0-2
-        let rtmrs = [
-            (&bootchain.rtmr0, &tcb_info.rtmr0, 0u8),
-            (&bootchain.rtmr1, &tcb_info.rtmr1, 1),
-            (&bootchain.rtmr2, &tcb_info.rtmr2, 2),
+        // Check RTMR0-2 (convert from bytes to hex strings)
+        let actual_rtmrs = [
+            hex::encode(td_report.rt_mr0),
+            hex::encode(td_report.rt_mr1),
+            hex::encode(td_report.rt_mr2),
         ];
-        for (expected, actual, idx) in rtmrs {
-            debug!("RTMR{} expected: {}", idx, expected);
-            debug!("RTMR{} actual:   {}", idx, actual);
-            let rtmr_match = expected == actual;
+        let expected_rtmrs = [&bootchain.rtmr0, &bootchain.rtmr1, &bootchain.rtmr2];
+
+        for idx in 0..3usize {
+            debug!("RTMR{} expected: {}", idx, expected_rtmrs[idx]);
+            debug!("RTMR{} actual:   {}", idx, actual_rtmrs[idx]);
+            let rtmr_match = &actual_rtmrs[idx] == expected_rtmrs[idx];
             debug!("RTMR{} match: {}", idx, rtmr_match);
 
             if !rtmr_match {
-                return Err(RatlsVerificationError::RtmrMismatch {
-                    index: idx,
-                    expected: expected.clone(),
-                    actual: actual.clone(),
+                return Err(RatlsVerificationError::BootchainMismatch {
+                    field: format!("rtmr{}", idx),
+                    expected: expected_rtmrs[idx].clone(),
+                    actual: actual_rtmrs[idx].clone(),
                 });
             }
         }
@@ -265,93 +284,79 @@ impl DstackTDXVerifier {
         }
     }
 
-    /// Verify app compose hash using TcbInfo from dstack-sdk.
+    /// Verify app compose hash using the trusted event log.
+    ///
+    /// The event log integrity is guaranteed by RTMR replay verification against
+    /// the cryptographically verified report.
     ///
     /// Fails if `app_compose` is not configured.
-    fn verify_app_compose(
-        &self,
-        tcb_info: &TcbInfo,
-        events: &[EventLog],
-    ) -> Result<(), RatlsVerificationError> {
+    fn verify_app_compose(&self, events: &[EventLog]) -> Result<(), RatlsVerificationError> {
         let app_compose = self.config.app_compose.as_ref().ok_or_else(|| {
             RatlsVerificationError::Configuration("app_compose is required".into())
         })?;
         let expected = get_compose_hash(app_compose);
 
+        debug!("Verifying app compose hash against trusted event log");
         debug!("App compose hash expected: {}", expected);
-        debug!("App compose hash from TCB: {}", tcb_info.compose_hash);
 
-        // First check against TcbInfo.compose_hash (string field)
-        let tcb_match = tcb_info.compose_hash == expected;
-        debug!("App compose hash match (TCB): {}", tcb_match);
+        // Verify against event log (trusted after RTMR replay verification)
+        let event = events
+            .iter()
+            .find(|e| e.event == "compose-hash")
+            .ok_or_else(|| {
+                RatlsVerificationError::AppComposeHashMismatch {
+                    expected: expected.clone(),
+                    actual: "<not found in event log>".to_string(),
+                }
+            })?;
 
-        if !tcb_match {
+        debug!("App compose hash from event log: {}", event.event_payload);
+        let eventlog_match = event.event_payload == expected;
+        debug!("App compose hash match: {}", eventlog_match);
+
+        if !eventlog_match {
             return Err(RatlsVerificationError::AppComposeHashMismatch {
-                expected: expected.clone(),
-                actual: tcb_info.compose_hash.clone(),
+                expected,
+                actual: event.event_payload.clone(),
             });
-        }
-
-        // Then verify against event log
-        let event = events.iter().find(|e| e.event == "compose-hash");
-        if let Some(e) = event {
-            debug!("App compose hash from event log: {}", e.event_payload);
-            let eventlog_match = e.event_payload == expected;
-            debug!("App compose hash match (event log): {}", eventlog_match);
-
-            if !eventlog_match {
-                return Err(RatlsVerificationError::AppComposeHashMismatch {
-                    expected,
-                    actual: e.event_payload.clone(),
-                });
-            }
         }
 
         debug!("App compose verification successful");
         Ok(())
     }
 
-    /// Verify OS image hash using TcbInfo from dstack-sdk.
+    /// Verify OS image hash using the trusted event log.
+    ///
+    /// The event log integrity is guaranteed by RTMR replay verification against
+    /// the cryptographically verified report.
     ///
     /// Fails if `os_image_hash` is not configured.
-    fn verify_os_image_hash(
-        &self,
-        tcb_info: &TcbInfo,
-        events: &[EventLog],
-    ) -> Result<(), RatlsVerificationError> {
+    fn verify_os_image_hash(&self, events: &[EventLog]) -> Result<(), RatlsVerificationError> {
         let expected = self.config.os_image_hash.as_ref().ok_or_else(|| {
             RatlsVerificationError::Configuration("os_image_hash is required".into())
         })?;
 
+        debug!("Verifying OS image hash against trusted event log");
         debug!("OS image hash expected: {}", expected);
 
-        // Check against TcbInfo.os_image_hash (string field)
-        if !tcb_info.os_image_hash.is_empty() {
-            debug!("OS image hash from TCB: {}", tcb_info.os_image_hash);
-            let tcb_match = &tcb_info.os_image_hash == expected;
-            debug!("OS image hash match (TCB): {}", tcb_match);
+        // Verify against event log (trusted after RTMR replay verification)
+        let event = events
+            .iter()
+            .find(|e| e.event == "os-image-hash")
+            .ok_or_else(|| RatlsVerificationError::OsImageHashMismatch {
+                expected: expected.clone(),
+                actual: Some("<not found in event log>".to_string()),
+            })?;
 
-            if !tcb_match {
-                return Err(RatlsVerificationError::OsImageHashMismatch {
-                    expected: expected.clone(),
-                    actual: Some(tcb_info.os_image_hash.clone()),
-                });
-            }
-        }
+        debug!("OS image hash from event log: {}", event.event_payload);
+        let eventlog_match = &event.event_payload == expected;
+        debug!("OS image hash match: {}", eventlog_match);
 
-        // Check against event log
-        let event = events.iter().find(|e| e.event == "os-image-hash");
-        if let Some(e) = event {
-            debug!("OS image hash from event log: {}", e.event_payload);
-            let eventlog_match = &e.event_payload == expected;
-            debug!("OS image hash match (event log): {}", eventlog_match);
-
-            if !eventlog_match {
-                return Err(RatlsVerificationError::OsImageHashMismatch {
-                    expected: expected.clone(),
-                    actual: Some(e.event_payload.clone()),
-                });
-            }
+        if !eventlog_match {
+            return Err(RatlsVerificationError::OsImageHashMismatch {
+                expected: expected.clone(),
+                actual: Some(event.event_payload.clone()),
+            });
         }
 
         debug!("OS image hash verification successful");
@@ -359,35 +364,50 @@ impl DstackTDXVerifier {
     }
 
     /// Verify RTMR replay using dstack-sdk's built-in replay_rtmrs().
+    ///
+    /// Compares replayed RTMRs from the event log against the trusted values
+    /// from the cryptographically verified report.
     fn verify_rtmr_replay(
         &self,
         quote_response: &GetQuoteResponse,
-        tcb_info: &TcbInfo,
+        verified_report: &VerifiedReport,
     ) -> Result<(), RatlsVerificationError> {
-        debug!("Verifying RTMR replay");
+        debug!("Verifying RTMR replay against verified report");
+
+        // Get the trusted TD report from DCAP verification
+        let td_report = verified_report.report.as_td10().ok_or_else(|| {
+            RatlsVerificationError::Other(anyhow::anyhow!(
+                "Expected TDX report but got SGX enclave report"
+            ))
+        })?;
 
         // Use dstack-sdk-types' built-in replay_rtmrs()
         let replayed: BTreeMap<u8, String> = quote_response
             .replay_rtmrs()
             .map_err(RatlsVerificationError::Other)?;
 
-        let expected = [
-            &tcb_info.rtmr0,
-            &tcb_info.rtmr1,
-            &tcb_info.rtmr2,
-            &tcb_info.rtmr3,
+        // Get trusted RTMRs from verified report (as hex strings)
+        let trusted_rtmrs = [
+            hex::encode(td_report.rt_mr0),
+            hex::encode(td_report.rt_mr1),
+            hex::encode(td_report.rt_mr2),
+            hex::encode(td_report.rt_mr3),
         ];
+
         for i in 0..4u8 {
             let replayed_rtmr = replayed.get(&i).cloned().unwrap_or_default();
-            debug!("RTMR{} from TCB:    {}", i, expected[i as usize]);
-            debug!("RTMR{} replayed:    {}", i, replayed_rtmr);
-            let rtmr_match = &replayed_rtmr == expected[i as usize];
+            debug!(
+                "RTMR{} from verified report: {}",
+                i, trusted_rtmrs[i as usize]
+            );
+            debug!("RTMR{} replayed:             {}", i, replayed_rtmr);
+            let rtmr_match = replayed_rtmr == trusted_rtmrs[i as usize];
             debug!("RTMR{} replay match: {}", i, rtmr_match);
 
             if !rtmr_match {
                 return Err(RatlsVerificationError::RtmrMismatch {
                     index: i,
-                    expected: expected[i as usize].clone(),
+                    expected: trusted_rtmrs[i as usize].clone(),
                     actual: replayed_rtmr,
                 });
             }
@@ -413,7 +433,7 @@ impl RatlsVerifier for DstackTDXVerifier {
         // 1. Generate nonce and get quote via HTTP POST to /tdx_quote
         let mut report_data = [0u8; 64];
         rand::Rng::fill(&mut rand::thread_rng(), &mut report_data);
-        let (quote_response, tcb_info) = get_quote_over_http(stream, &report_data, hostname).await?;
+        let quote_response = get_quote_over_http(stream, &report_data, hostname).await?;
 
         // 2. Parse event log using dstack-sdk-types
         debug!("Parsing event log");
@@ -438,8 +458,8 @@ impl RatlsVerifier for DstackTDXVerifier {
         // Async quote verification - no blocking!
         let verified_report = self.verify_quote(&quote_bytes).await?;
 
-        // 5. Verify RTMR replay using dstack-sdk's replay_rtmrs()
-        self.verify_rtmr_replay(&quote_response, &tcb_info)?;
+        // 5. Verify RTMR replay against the verified report
+        self.verify_rtmr_replay(&quote_response, &verified_report)?;
 
         // Skip remaining checks if runtime verification is disabled
         if self.config.disable_runtime_verification {
@@ -447,14 +467,14 @@ impl RatlsVerifier for DstackTDXVerifier {
             return Ok(Report::Tdx(verified_report));
         }
 
-        // 6. Verify bootchain (MRTD, RTMR0-2)
-        self.verify_bootchain(&tcb_info)?;
+        // 6. Verify bootchain (MRTD, RTMR0-2) against verified report
+        self.verify_bootchain(&verified_report)?;
 
-        // 7. Verify app compose hash
-        self.verify_app_compose(&tcb_info, &events)?;
+        // 7. Verify app compose hash against trusted event log
+        self.verify_app_compose(&events)?;
 
-        // 8. Verify OS image hash
-        self.verify_os_image_hash(&tcb_info, &events)?;
+        // 8. Verify OS image hash against trusted event log
+        self.verify_os_image_hash(&events)?;
 
         debug!("DStack TDX verification complete");
         Ok(Report::Tdx(verified_report))
@@ -466,7 +486,7 @@ async fn get_quote_over_http<S>(
     stream: &mut S,
     report_data: &[u8; 64],
     hostname: &str,
-) -> Result<(GetQuoteResponse, TcbInfo), RatlsVerificationError>
+) -> Result<GetQuoteResponse, RatlsVerificationError>
 where
     S: AsyncByteStream,
 {
@@ -536,7 +556,7 @@ where
     let response: QuoteEndpointResponse = serde_json::from_slice(response_body)
         .map_err(|e| RatlsVerificationError::Other(e.into()))?;
 
-    Ok((response.quote, response.tcb_info))
+    Ok(response.quote)
 }
 
 /// Find the start of HTTP body (after \r\n\r\n).
