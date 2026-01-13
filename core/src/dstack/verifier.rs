@@ -416,6 +416,38 @@ impl DstackTDXVerifier {
         debug!("RTMR replay verification successful");
         Ok(())
     }
+
+    /// Verify report data (nonce) matches what we sent.
+    ///
+    /// This prevents replay attacks by ensuring the quote was generated
+    /// specifically for this verification request.
+    fn verify_report_data(
+        &self,
+        report_data: &[u8; 64],
+        verified_report: &VerifiedReport,
+    ) -> Result<(), RatlsVerificationError> {
+        debug!("Verifying report data (nonce) against verified report");
+
+        // Get the trusted TD report from DCAP verification
+        let td_report = verified_report.report.as_td10().ok_or_else(|| {
+            RatlsVerificationError::Other(anyhow::anyhow!(
+                "Expected TDX report but got SGX enclave report"
+            ))
+        })?;
+
+        let expected = hex::encode(report_data);
+        let actual = hex::encode(td_report.report_data);
+
+        debug!("Report data expected: {}", expected);
+        debug!("Report data actual:   {}", actual);
+
+        if expected != actual {
+            return Err(RatlsVerificationError::ReportDataMismatch { expected, actual });
+        }
+
+        debug!("Report data verification successful");
+        Ok(())
+    }
 }
 
 impl RatlsVerifier for DstackTDXVerifier {
@@ -458,7 +490,10 @@ impl RatlsVerifier for DstackTDXVerifier {
         // Async quote verification - no blocking!
         let verified_report = self.verify_quote(&quote_bytes).await?;
 
-        // 5. Verify RTMR replay against the verified report
+        // 5. Verify report data (nonce) matches what we sent
+        self.verify_report_data(&report_data, &verified_report)?;
+
+        // 6. Verify RTMR replay against the verified report
         self.verify_rtmr_replay(&quote_response, &verified_report)?;
 
         // Skip remaining checks if runtime verification is disabled
@@ -467,13 +502,13 @@ impl RatlsVerifier for DstackTDXVerifier {
             return Ok(Report::Tdx(verified_report));
         }
 
-        // 6. Verify bootchain (MRTD, RTMR0-2) against verified report
+        // 7. Verify bootchain (MRTD, RTMR0-2) against verified report
         self.verify_bootchain(&verified_report)?;
 
-        // 7. Verify app compose hash against trusted event log
+        // 8. Verify app compose hash against trusted event log
         self.verify_app_compose(&events)?;
 
-        // 8. Verify OS image hash against trusted event log
+        // 9. Verify OS image hash against trusted event log
         self.verify_os_image_hash(&events)?;
 
         debug!("DStack TDX verification complete");

@@ -48,6 +48,10 @@ pub enum RatlsVerificationError {
     #[error("TCB status {status} not allowed (allowed: {allowed:?})")]
     TcbStatusNotAllowed { status: String, allowed: Vec<String> },
 
+    /// Report data (nonce) mismatch - potential replay attack.
+    #[error("report data mismatch: expected {expected}, got {actual}")]
+    ReportDataMismatch { expected: String, actual: String },
+
     /// Configuration error.
     #[error("configuration error: {0}")]
     Configuration(String),
