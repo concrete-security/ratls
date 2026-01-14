@@ -35,7 +35,7 @@ fn get_vllm_docker_compose() -> &'static str {
 fn test_compose_hash_calculation() {
     // Test that compose hash calculation matches between Rust and Python
     let app_compose = get_default_app_compose();
-    let hash = get_compose_hash(&app_compose);
+    let hash = get_compose_hash(&app_compose).expect("Failed to compute compose hash");
 
     // This should be a valid hex string
     assert_eq!(hash.len(), 64);
@@ -504,7 +504,7 @@ mod integration {
             .await
             .expect("Failed to connect TCP");
 
-        let result = ratls_core::tls_handshake(tcp, TEST_HOST, None).await;
+        let result = ratls_core::connect::tls_handshake(tcp, TEST_HOST, None).await;
 
         assert!(
             result.is_ok(),

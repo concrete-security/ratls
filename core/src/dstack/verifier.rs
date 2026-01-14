@@ -7,8 +7,8 @@ use dcap_qvl::collateral::get_collateral;
 use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::{verify, VerifiedReport};
 use dcap_qvl::QuoteCollateralV3;
-use dstack_sdk_types::dstack::{EventLog, GetQuoteResponse, TcbInfo};
-use log::debug;
+use dstack_sdk_types::dstack::{EventLog, GetQuoteResponse};
+use log::{debug, warn};
 use sha2::{Digest, Sha256};
 
 use crate::dstack::compose_hash::get_compose_hash;
@@ -21,14 +21,20 @@ pub use crate::dstack::config::DstackTDXVerifierBuilder;
 /// Cache key for collateral: (pccs_url, fmspc, ca)
 type CollateralCacheKey = (String, String, &'static str);
 
+/// Cached collateral with timestamp for TTL expiration.
+#[derive(Clone)]
+struct CachedCollateral {
+    collateral: QuoteCollateralV3,
+    cached_at_secs: u64,
+}
+
+/// Default collateral cache TTL: 8 hours (in seconds).
+const COLLATERAL_CACHE_TTL_SECS: u64 = 8 * 3600;
+
 /// Response from the /tdx_quote endpoint.
-///
-/// Note: `tcb_info` is included for deserialization but not used for verification.
 #[derive(Debug, serde::Deserialize)]
 struct QuoteEndpointResponse {
     quote: GetQuoteResponse,
-    #[allow(dead_code)]
-    tcb_info: TcbInfo,
 }
 
 /// DstackTDXVerifier performs TDX attestation verification for dstack deployments.
@@ -43,8 +49,8 @@ struct QuoteEndpointResponse {
 /// 7. Verify OS image hash
 pub struct DstackTDXVerifier {
     config: DstackTDXVerifierConfig,
-    /// Cached collateral keyed by (pccs_url, fmspc, ca)
-    cached_collateral: Arc<RwLock<HashMap<CollateralCacheKey, QuoteCollateralV3>>>,
+    /// Cached collateral keyed by (pccs_url, fmspc, ca) with TTL expiration.
+    cached_collateral: Arc<RwLock<HashMap<CollateralCacheKey, CachedCollateral>>>,
 }
 
 impl DstackTDXVerifier {
@@ -97,12 +103,33 @@ impl DstackTDXVerifier {
 
         let cache_key = (pccs_url.to_string(), fmspc.clone(), ca);
 
-        // Try to get collateral from cache
+        // Get current time - platform specific (needed for cache TTL and verification)
+        #[cfg(not(target_arch = "wasm32"))]
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| {
+                RatlsVerificationError::Quote(format!("Failed to get current time: {}", e))
+            })?
+            .as_secs();
+
+        #[cfg(target_arch = "wasm32")]
+        let now_secs = (js_sys::Date::now() / 1000.0) as u64;
+
+        // Try to get collateral from cache (with TTL check)
         let cached = if self.config.cache_collateral {
-            if let Ok(guard) = self.cached_collateral.read() {
-                guard.get(&cache_key).cloned()
-            } else {
-                None
+            match self.cached_collateral.read() {
+                Ok(guard) => guard.get(&cache_key).and_then(|entry| {
+                    if now_secs.saturating_sub(entry.cached_at_secs) < COLLATERAL_CACHE_TTL_SECS {
+                        Some(entry.collateral.clone())
+                    } else {
+                        debug!("Cached collateral expired for FMSPC={}, CA={}", fmspc, ca);
+                        None
+                    }
+                }),
+                Err(_) => {
+                    warn!("Collateral cache lock poisoned, treating as cache miss");
+                    None
+                }
             }
         } else {
             None
@@ -126,9 +153,17 @@ impl DstackTDXVerifier {
 
                 // Cache if enabled
                 if self.config.cache_collateral {
-                    if let Ok(mut guard) = self.cached_collateral.write() {
-                        debug!("Caching collateral for FMSPC={}, CA={}", fmspc, ca);
-                        guard.insert(cache_key, c.clone());
+                    match self.cached_collateral.write() {
+                        Ok(mut guard) => {
+                            debug!("Caching collateral for FMSPC={}, CA={}", fmspc, ca);
+                            guard.insert(cache_key, CachedCollateral {
+                                collateral: c.clone(),
+                                cached_at_secs: now_secs,
+                            });
+                        }
+                        Err(_) => {
+                            warn!("Collateral cache lock poisoned, skipping cache write");
+                        }
                     }
                 }
                 c
@@ -136,18 +171,6 @@ impl DstackTDXVerifier {
         };
 
         debug!("Collateral received, verifying DCAP quote");
-
-        // Get current time - platform specific
-        #[cfg(not(target_arch = "wasm32"))]
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| {
-                RatlsVerificationError::Quote(format!("Failed to get current time: {}", e))
-            })?
-            .as_secs();
-
-        #[cfg(target_arch = "wasm32")]
-        let now_secs = (js_sys::Date::now() / 1000.0) as u64;
 
         // Verify the quote
         let report = verify(quote, &collateral, now_secs)
@@ -294,7 +317,12 @@ impl DstackTDXVerifier {
         let app_compose = self.config.app_compose.as_ref().ok_or_else(|| {
             RatlsVerificationError::Configuration("app_compose is required".into())
         })?;
-        let expected = get_compose_hash(app_compose);
+        let expected = get_compose_hash(app_compose).map_err(|e| {
+            RatlsVerificationError::Configuration(format!(
+                "Failed to serialize app_compose for hashing: {}",
+                e
+            ))
+        })?;
 
         debug!("Verifying app compose hash against trusted event log");
         debug!("App compose hash expected: {}", expected);
@@ -395,7 +423,12 @@ impl DstackTDXVerifier {
         ];
 
         for i in 0..4u8 {
-            let replayed_rtmr = replayed.get(&i).cloned().unwrap_or_default();
+            let replayed_rtmr = replayed.get(&i).cloned().ok_or_else(|| {
+                RatlsVerificationError::Quote(format!(
+                    "RTMR{} missing from event log replay - malformed event log",
+                    i
+                ))
+            })?;
             debug!(
                 "RTMR{} from verified report: {}",
                 i, trusted_rtmrs[i as usize]
@@ -589,7 +622,12 @@ where
     let response_body = &response_buf[body_start..];
 
     let response: QuoteEndpointResponse = serde_json::from_slice(response_body)
-        .map_err(|e| RatlsVerificationError::Other(e.into()))?;
+        .map_err(|e| {
+            RatlsVerificationError::Quote(format!(
+                "Failed to parse /tdx_quote response: {}",
+                e
+            ))
+        })?;
 
     Ok(response.quote)
 }

@@ -89,7 +89,7 @@ pub mod tdx;
 pub mod verifier;
 
 // High-level API
-pub use connect::{ratls_connect, tls_handshake, TlsStream};
+pub use connect::{ratls_connect, TlsStream};
 pub use policy::Policy;
 
 // Dstack-specific (backward compatible re-exports)
