@@ -3,9 +3,50 @@
  *
  * This module provides a fetch-like API that delegates HTTP handling to the
  * WASM module (including chunked transfer encoding for streaming LLM responses).
+ *
+ * @example Production usage with full verification
+ * ```js
+ * import { init, createRatlsFetch, mergeWithDefaultAppCompose } from "ratls-fetch.js"
+ *
+ * await init()
+ *
+ * const policy = {
+ *   type: "dstack_tdx",
+ *   expected_bootchain: {
+ *     mrtd: "b24d3b24...",
+ *     rtmr0: "24c15e08...",
+ *     rtmr1: "6e1afb74...",
+ *     rtmr2: "89e73ced..."
+ *   },
+ *   os_image_hash: "86b18137...",
+ *   app_compose: mergeWithDefaultAppCompose({
+ *     docker_compose_file: "services:\n  app:\n    image: myapp",
+ *     allowed_envs: ["API_KEY"]
+ *   }),
+ *   allowed_tcb_status: ["UpToDate", "SWHardeningNeeded"]
+ * }
+ *
+ * const fetch = createRatlsFetch({
+ *   proxyUrl: "ws://localhost:9000",
+ *   targetHost: "enclave.example.com",
+ *   policy
+ * })
+ * const response = await fetch("/api/data")
+ * ```
+ *
+ * @example Development only (NOT for production)
+ * ```js
+ * // WARNING: disable_runtime_verification skips bootchain/app_compose/os_image checks
+ * // Use ONLY for development/testing, NEVER in production
+ * const devPolicy = {
+ *   type: "dstack_tdx",
+ *   disable_runtime_verification: true,  // DEV ONLY
+ *   allowed_tcb_status: ["UpToDate", "SWHardeningNeeded", "OutOfDate"]
+ * }
+ * ```
  */
 
-import init, { AttestedStream, RatlsHttp } from "./ratls_wasm.js";
+import init, { AttestedStream, RatlsHttp, mergeWithDefaultAppCompose } from "./ratls_wasm.js";
 
 // ============================================================================
 // WASM Initialization
@@ -18,6 +59,40 @@ async function ensureWasm() {
     wasmReady = init();
   }
   return wasmReady;
+}
+
+// ============================================================================
+// Connection Pool (for HTTP keep-alive / connection reuse)
+// ============================================================================
+
+/**
+ * Connection cache keyed by (wsUrl, serverName).
+ * Each entry holds an RatlsHttp instance that can be reused.
+ * @type {Map<string, RatlsHttp>}
+ */
+const connectionCache = new Map();
+
+/**
+ * Close all cached connections.
+ * Call this when you want to clean up resources.
+ */
+export function closeAllConnections() {
+  for (const http of connectionCache.values()) {
+    try {
+      http.close();
+    } catch (e) {
+      // Ignore errors during cleanup
+    }
+  }
+  connectionCache.clear();
+}
+
+/**
+ * Get the number of cached connections.
+ * @returns {{ total: number }}
+ */
+export function getConnectionPoolStats() {
+  return { total: connectionCache.size };
 }
 
 // ============================================================================
@@ -67,19 +142,28 @@ function buildProxyUrl(base, target) {
 /**
  * Create a fetch-compatible function for attested TLS connections.
  *
+ * Connections are automatically pooled and reused for subsequent requests
+ * to the same target. The `onAttestation` callback is called only once
+ * when a new connection is established (not on reused connections).
+ *
  * @param {Object} options
  * @param {string} options.proxyUrl - WebSocket proxy URL (e.g., "ws://127.0.0.1:9000")
  * @param {string} options.targetHost - Target TEE server (e.g., "vllm.example.com:443")
+ * @param {Object} options.policy - Verification policy
  * @param {string} [options.serverName] - TLS server name (defaults to hostname from targetHost)
  * @param {Object} [options.defaultHeaders] - Default headers to include in all requests
- * @param {Function} [options.onAttestation] - Callback when attestation is received
+ * @param {Function} [options.onAttestation] - Callback when attestation is received (only on new connections)
  * @returns {Function} A fetch-compatible async function
  */
 export function createRatlsFetch(options) {
-  const { proxyUrl, targetHost, serverName, defaultHeaders, onAttestation } = options;
+  const { proxyUrl, targetHost, serverName, defaultHeaders, onAttestation, policy } = options;
 
   if (!proxyUrl || !targetHost) {
     throw new Error("proxyUrl and targetHost are required for RA-TLS fetch");
+  }
+
+  if (!policy) {
+    throw new Error("policy is required for RATLS verification. See docs for policy format.");
   }
 
   const normalizedTarget = normalizeTarget(targetHost);
@@ -90,20 +174,49 @@ export function createRatlsFetch(options) {
   const wsUrl = buildProxyUrl(proxyUrl, normalizedTarget);
   const base = new URL(`https://${normalizedTarget}`);
 
+  // Cache key for this connection target
+  const cacheKey = `${wsUrl}|${sni}`;
+
   return async function ratlsFetch(input, init = {}) {
     await ensureWasm();
 
-    // Connect and perform RA-TLS handshake
-    const http = await RatlsHttp.connect(wsUrl, sni);
+    // Try to reuse an existing connection
+    let http = connectionCache.get(cacheKey);
+    let attestation;
 
-    // Get attestation and notify callback
-    const attestation = http.attestation();
-    if (onAttestation && typeof onAttestation === "function") {
-      try {
-        await onAttestation(attestation);
-      } catch (e) {
-        console.error("[ratls-fetch] onAttestation callback failed:", e);
-        throw e;
+    if (http && http.isReady()) {
+      // Reuse existing connection - no re-attestation needed
+      attestation = http.attestation();
+    } else {
+      // Need to create a new connection
+      // First, clean up any stale connection
+      if (http) {
+        try {
+          http.close();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        connectionCache.delete(cacheKey);
+      }
+
+      // Connect and perform RA-TLS handshake with policy
+      http = await RatlsHttp.connect(wsUrl, sni, policy);
+      connectionCache.set(cacheKey, http);
+
+      // Get attestation
+      attestation = http.attestation();
+
+      // Call attestation callback ONLY for new connections
+      if (onAttestation && typeof onAttestation === "function") {
+        try {
+          await onAttestation(attestation);
+        } catch (e) {
+          console.error("[ratls-fetch] onAttestation callback failed:", e);
+          // Clean up the connection on attestation callback failure
+          connectionCache.delete(cacheKey);
+          try { http.close(); } catch (_) {}
+          throw e;
+        }
       }
     }
 
@@ -136,13 +249,21 @@ export function createRatlsFetch(options) {
     }
 
     // Perform HTTP request via WASM (handles chunked encoding)
-    const result = await http.fetch(
-      request.method,
-      path,
-      host,
-      mergedHeaders,
-      body
-    );
+    let result;
+    try {
+      result = await http.fetch(
+        request.method,
+        path,
+        host,
+        mergedHeaders,
+        body
+      );
+    } catch (e) {
+      // On request failure, remove the connection from cache
+      connectionCache.delete(cacheKey);
+      try { http.close(); } catch (_) {}
+      throw e;
+    }
 
     // Convert headers object to Headers instance
     const responseHeaders = new Headers();
@@ -170,4 +291,4 @@ export function createRatlsFetch(options) {
 }
 
 // Re-export for advanced usage
-export { init, AttestedStream, RatlsHttp };
+export { init, AttestedStream, RatlsHttp, mergeWithDefaultAppCompose };

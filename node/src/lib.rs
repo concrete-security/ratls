@@ -2,13 +2,23 @@ use bytes::{Bytes, BytesMut};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use once_cell::sync::Lazy;
-use ratls_core::{ratls_connect as core_ratls_connect, AttestationResult, Policy};
+use ratls_core::{
+    dstack::merge_with_default_app_compose, ratls_connect as core_ratls_connect, Policy, Report,
+    TlsStream as CoreTlsStream,
+};
+use rustls::crypto::aws_lc_rs::default_provider;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{lookup_host, TcpStream};
 use tokio::sync::Mutex;
+
+// Initialize the crypto provider once at module load
+static CRYPTO_INIT: Lazy<()> = Lazy::new(|| {
+    let _ = default_provider().install_default();
+});
 
 #[napi(object)]
 pub struct JsAttestation {
@@ -22,14 +32,16 @@ pub struct JsAttestation {
     pub advisory_ids: Vec<String>,
 }
 
-impl From<AttestationResult> for JsAttestation {
-    fn from(value: AttestationResult) -> Self {
-        Self {
-            trusted: value.trusted,
-            tee_type: format!("{:?}", value.tee_type).to_lowercase(),
-            measurement: value.measurement,
-            tcb_status: value.tcb_status,
-            advisory_ids: value.advisory_ids,
+impl From<Report> for JsAttestation {
+    fn from(report: Report) -> Self {
+        match report {
+            Report::Tdx(verified) => Self {
+                trusted: true, // Success implies trusted
+                tee_type: "tdx".to_string(),
+                measurement: None, // VerifiedReport doesn't expose this directly
+                tcb_status: verified.status.clone(),
+                advisory_ids: verified.advisory_ids.clone(),
+            },
         }
     }
 }
@@ -41,7 +53,7 @@ pub struct JsRatlsConnection {
     pub attestation: JsAttestation,
 }
 
-type TlsStream = ratls_core::platform::TlsStream<TcpStream>;
+type TlsStream = CoreTlsStream<TcpStream>;
 
 struct SocketState {
     reader: Arc<Mutex<ReadHalf<TlsStream>>>,
@@ -51,9 +63,30 @@ struct SocketState {
 static SOCKETS: Lazy<Mutex<HashMap<u32, SocketState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static NEXT_SOCKET_ID: AtomicU32 = AtomicU32::new(1);
 
-/// Establish an RATLS connection and return a socket handle with attestation result
+/// Merge a user-provided app_compose with default values.
+///
+/// This allows users to provide only the fields they care about (typically
+/// `docker_compose_file` and `allowed_envs`) and get a complete app_compose
+/// configuration with all required default fields filled in.
+#[napi(js_name = "mergeWithDefaultAppCompose")]
+pub fn merge_with_default_app_compose_js(user_compose: Value) -> Value {
+    merge_with_default_app_compose(&user_compose)
+}
+
+/// Establish an RATLS connection and return a socket handle with attestation result.
 #[napi(js_name = "ratlsConnect")]
-pub async fn ratls_connect(target_host: String, server_name: String) -> napi::Result<JsRatlsConnection> {
+pub async fn ratls_connect(
+    target_host: String,
+    server_name: String,
+    policy_json: Value,
+) -> napi::Result<JsRatlsConnection> {
+    // Ensure crypto provider is initialized
+    Lazy::force(&CRYPTO_INIT);
+
+    // Parse and validate the policy from JSON
+    let policy: Policy = serde_json::from_value(policy_json)
+        .map_err(|e| Error::from_reason(format!("invalid policy: {e}")))?;
+
     let tcp_addr = lookup_host(&target_host)
         .await
         .map_err(|err| Error::from_reason(format!("invalid target host: {err}")))?
@@ -64,10 +97,10 @@ pub async fn ratls_connect(target_host: String, server_name: String) -> napi::Re
         .await
         .map_err(|err| Error::from_reason(format!("tcp connect failed: {err}")))?;
 
-    let (tls, attestation) = core_ratls_connect(
+    let (tls, report) = core_ratls_connect(
         tcp,
         &server_name,
-        Policy::default(),
+        policy,
         Some(vec!["http/1.1".into()]),
     )
     .await
@@ -85,7 +118,7 @@ pub async fn ratls_connect(target_host: String, server_name: String) -> napi::Re
 
     Ok(JsRatlsConnection {
         socket_id,
-        attestation: attestation.into(),
+        attestation: report.into(),
     })
 }
 
