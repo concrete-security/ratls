@@ -1,13 +1,13 @@
 # aTLS Toolkit
 
-Portable Remote Attestation for the modern web. This toolkit delivers verified TLS connections to TEEs from browsers (via WASM) without relying on platform-native attestation stacks.
+Attested TLS for the modern web. This toolkit delivers verified TLS connections to Trusted Execution Environments (TEEs) from browsers (via WASM) and Node.js.
 
 ---
 
 # 1. Project Overview & Quickstart
 
 ## Key Features
-- Browser-first verification: full attestation performed inside WASM.
+- Multi-platform: native bindings for Node.js, WASM for browsers, and a Rust core for direct integration.
 - Configurable policy engine: enforce TCB levels, measurements, advisory IDs.
 - Supported TEEs: Intel TDX today; AMD SEV-SNP planned.
 
@@ -29,6 +29,30 @@ Browsers lack raw TCP sockets and attestation primitives. The toolkit uses WebSo
 - `atls_connect`: Handshake + verification over a generic async byte stream.
 - `AtlsVerifier` trait: Extensible verification interface for different TEE types.
 - `DstackTdxPolicy`: Configures TDX verification including bootchain, app compose, and TCB status.
+
+## `node/`
+- `createAtlsFetch(...)`: Drop-in fetch replacement for Node.js applications.
+- `createAtlsAgent(...)`: Custom HTTPS agent for use with existing HTTP clients.
+- Works with AI SDKs (OpenAI, Vercel AI SDK) via fetch override.
+
+Example:
+```javascript
+import { createAtlsFetch } from "atls-node";
+
+const fetch = createAtlsFetch({
+  target: "secure-enclave.com",
+  policy: { type: "dstack_tdx", /* ... */ },
+  onAttestation: (att) => console.log("TEE:", att.teeType)
+});
+
+const response = await fetch("/v1/chat/completions", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ model: "gpt", messages: [...] })
+});
+
+console.log(response.attestation); // { trusted: true, teeType: "tdx", ... }
+```
 
 ## `wasm/`
 - `AtlsHttp`: HTTP client over attested TLS with chunked transfer encoding support.
@@ -62,6 +86,7 @@ console.log(response.attestation); // { trusted: true, teeType: "Tdx", ... }
 - `docs/`: Design notes, specs, and task tracking.
 
 ## Binding status
+- Node.js: functional; provides `createAtlsFetch` and `createAtlsAgent` via native NAPI bindings.
 - WASM: functional; provides `AtlsHttp`, `AttestedStream`, and `createAtlsFetch`.
 - Python: scaffolding in progress (`python/README.md`) with planned async API parity once the core pieces stabilize.
 
@@ -149,8 +174,9 @@ Server responds:
 # Development Reference
 
 ## Directory Structure
-- `core/`: Verification + policy.
-- `wasm/`: Browser bindings.
+- `core/`: Verification + policy (Rust).
+- `node/`: Node.js bindings (NAPI-RS).
+- `wasm/`: Browser bindings (WASM).
 - `server-examples/`: Forthcoming reference TEEs.
 
 ## Build Commands
