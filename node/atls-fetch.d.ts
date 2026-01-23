@@ -127,6 +127,12 @@ export interface AtlsFetchOptions {
   /** Default headers applied to every request */
   headers?: Record<string, string>
   /**
+   * Session TTL in minutes. After this time, idle sockets are closed and
+   * new connections will require fresh attestation.
+   * Default: 30 minutes. Can also be set via ATLS_SESSION_TTL_MINUTES env var.
+   */
+  sessionTtlMinutes?: number
+  /**
    * Callback invoked after attestation, before request proceeds.
    * Throw an error to reject the connection.
    */
@@ -211,6 +217,12 @@ export interface AtlsAgentOptions extends AgentOptions {
   policy: Policy
   /** Optional SNI hostname override */
   serverName?: string
+  /**
+   * Session TTL in minutes. After this time, idle sockets are closed and
+   * new connections will require fresh attestation.
+   * Default: 30 minutes. Can also be set via ATLS_SESSION_TTL_MINUTES env var.
+   */
+  sessionTtlMinutes?: number
   /** Callback invoked after attestation */
   onAttestation?: (attestation: AtlsAttestation, socket: AtlsSocket) => void
 }

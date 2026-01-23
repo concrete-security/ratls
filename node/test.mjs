@@ -216,6 +216,77 @@ const tests = [
     assert(typeof mainExports.mergeWithDefaultAppCompose === "function", "mergeWithDefaultAppCompose not exported")
   }),
 
+  // ============================================================================
+  // TTL Tests
+  // ============================================================================
+
+  test("Session TTL defaults to 30 minutes", async () => {
+    delete process.env.ATLS_SESSION_TTL_MINUTES
+    const agent = createAtlsAgent({
+      target: "example.com",
+      policy: DEV_POLICY,
+    })
+    assert(
+      agent.options.freeSocketTimeout === 30 * 60 * 1000,
+      `freeSocketTimeout should default to 30 minutes (1800000ms), got ${agent.options.freeSocketTimeout}`
+    )
+  }),
+
+  test("Session TTL option is applied", async () => {
+    const agent = createAtlsAgent({
+      target: "example.com",
+      policy: DEV_POLICY,
+      sessionTtlMinutes: 5,
+    })
+    assert(
+      agent.options.freeSocketTimeout === 5 * 60 * 1000,
+      `freeSocketTimeout should be 5 minutes (300000ms), got ${agent.options.freeSocketTimeout}`
+    )
+  }),
+
+  test("Session TTL from environment variable", async () => {
+    process.env.ATLS_SESSION_TTL_MINUTES = "10"
+    const agent = createAtlsAgent({
+      target: "example.com",
+      policy: DEV_POLICY,
+    })
+    assert(
+      agent.options.freeSocketTimeout === 10 * 60 * 1000,
+      `freeSocketTimeout should be 10 minutes (600000ms), got ${agent.options.freeSocketTimeout}`
+    )
+    delete process.env.ATLS_SESSION_TTL_MINUTES
+  }),
+
+  test("Session TTL option takes precedence over env var", async () => {
+    process.env.ATLS_SESSION_TTL_MINUTES = "10"
+    const agent = createAtlsAgent({
+      target: "example.com",
+      policy: DEV_POLICY,
+      sessionTtlMinutes: 5,
+    })
+    assert(
+      agent.options.freeSocketTimeout === 5 * 60 * 1000,
+      `freeSocketTimeout should be 5 minutes (option) not 10 minutes (env), got ${agent.options.freeSocketTimeout}`
+    )
+    delete process.env.ATLS_SESSION_TTL_MINUTES
+  }),
+
+  test("Session TTL supports fractional minutes", async () => {
+    const agent = createAtlsAgent({
+      target: "example.com",
+      policy: DEV_POLICY,
+      sessionTtlMinutes: 0.05, // 3 seconds
+    })
+    assert(
+      agent.options.freeSocketTimeout === 3000,
+      `freeSocketTimeout should be 3 seconds (3000ms), got ${agent.options.freeSocketTimeout}`
+    )
+  }),
+
+  // ============================================================================
+  // Integration Tests
+  // ============================================================================
+
   test("full verification against vllm.concrete-security.com", async () => {
     const fetch = createAtlsFetch({
       target: "vllm.concrete-security.com",
