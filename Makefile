@@ -1,4 +1,4 @@
-.PHONY: help test test-all test-wasm test-wasm-node test-proxy build build-wasm build-node test-node clean demo-wasm setup-wasm
+.PHONY: help test test-all test-wasm test-wasm-node test-wasm-ttl test-proxy build build-wasm build-node test-node clean demo-wasm setup-wasm
 
 CARGO ?= cargo
 DEMO_PORT ?= 8080
@@ -9,8 +9,9 @@ help:
 	@echo "  make test-proxy     # run proxy unit and integration tests"
 	@echo "  make test-wasm      # cargo check atls-wasm for wasm32 target"
 	@echo "  make test-wasm-node # run WASM tests in Node.js via wasm-pack"
+	@echo "  make test-wasm-ttl  # run WASM TTL unit tests"
 	@echo "  make test-node      # run Node.js binding tests"
-	@echo "  make test-all       # run all tests (native + wasm + node)"
+	@echo "  make test-all       # run all tests (native + wasm + node + wasm-ttl)"
 	@echo ""
 	@echo "  make build          # build all native crates"
 	@echo "  make build-wasm     # build WASM package with wasm-pack"
@@ -42,7 +43,7 @@ test-node:
 	cd node && pnpm test
 
 # All tests
-test-all: test test-wasm test-node
+test-all: test test-wasm test-node test-wasm-ttl
 
 # Build all native crates
 build:
@@ -69,6 +70,11 @@ build-wasm:
 	cd wasm && wasm-pack build --target web --out-dir pkg
 	@cp -f wasm/src/atls-fetch.js wasm/pkg/ 2>/dev/null || true
 	@cp -f wasm/src/atls-fetch.d.ts wasm/pkg/ 2>/dev/null || true
+	@cp -f wasm/src/atls-fetch.test.js wasm/pkg/ 2>/dev/null || true
+
+# Run WASM TTL unit tests (requires build-wasm first)
+test-wasm-ttl:
+	cd wasm/pkg && node atls-fetch.test.js
 
 # Build Node.js bindings
 build-node:

@@ -48,10 +48,6 @@
 
 import init, { AttestedStream, AtlsHttp, mergeWithDefaultAppCompose } from "./atls_wasm.js";
 
-// ============================================================================
-// WASM Initialization
-// ============================================================================
-
 let wasmReady;
 
 async function ensureWasm() {
@@ -61,14 +57,10 @@ async function ensureWasm() {
   return wasmReady;
 }
 
-// ============================================================================
-// Connection Pool (for HTTP keep-alive / connection reuse)
-// ============================================================================
-
 /**
  * Connection cache keyed by (wsUrl, serverName).
- * Each entry holds an AtlsHttp instance that can be reused.
- * @type {Map<string, AtlsHttp>}
+ * Each entry holds an AtlsHttp instance with its creation timestamp.
+ * @type {Map<string, { http: AtlsHttp, connectedAt: number }>}
  */
 const connectionCache = new Map();
 
@@ -77,9 +69,9 @@ const connectionCache = new Map();
  * Call this when you want to clean up resources.
  */
 export function closeAllConnections() {
-  for (const http of connectionCache.values()) {
+  for (const entry of connectionCache.values()) {
     try {
-      http.close();
+      entry.http.close();
     } catch (e) {
       // Ignore errors during cleanup
     }
@@ -95,9 +87,35 @@ export function getConnectionPoolStats() {
   return { total: connectionCache.size };
 }
 
-// ============================================================================
-// URL Helpers
-// ============================================================================
+/**
+ * Default session TTL: 30 minutes in milliseconds.
+ * After this time, connections will be re-established with fresh attestation.
+ */
+const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Get the configured session TTL in milliseconds.
+ * Can be overridden via ATLS_SESSION_TTL_MINUTES environment variable.
+ * @returns {number} TTL in milliseconds
+ */
+export function getSessionTTL() {
+  if (typeof process !== "undefined" && process.env?.ATLS_SESSION_TTL_MINUTES) {
+    const minutes = parseFloat(process.env.ATLS_SESSION_TTL_MINUTES);
+    if (!isNaN(minutes) && minutes > 0) {
+      return minutes * 60 * 1000;
+    }
+  }
+  return DEFAULT_SESSION_TTL_MS;
+}
+
+/**
+ * Check if a connection has exceeded its TTL.
+ * @param {number} connectedAt - Timestamp when connection was established
+ * @returns {boolean} True if connection has expired
+ */
+export function isConnectionExpired(connectedAt) {
+  return Date.now() - connectedAt > getSessionTTL();
+}
 
 function isLoopbackHostname(host) {
   const value = host?.toLowerCase?.() || "";
@@ -134,10 +152,6 @@ function buildProxyUrl(base, target) {
   }
   return url.toString();
 }
-
-// ============================================================================
-// Main API
-// ============================================================================
 
 /**
  * Create a fetch-compatible function for attested TLS connections.
@@ -181,18 +195,20 @@ export function createAtlsFetch(options) {
     await ensureWasm();
 
     // Try to reuse an existing connection
-    let http = connectionCache.get(cacheKey);
+    let cached = connectionCache.get(cacheKey);
+    let http;
     let attestation;
 
-    if (http && http.isReady()) {
+    if (cached && cached.http.isReady() && !isConnectionExpired(cached.connectedAt)) {
       // Reuse existing connection - no re-attestation needed
+      http = cached.http;
       attestation = http.attestation();
     } else {
-      // Need to create a new connection
-      // First, clean up any stale connection
-      if (http) {
+      // Need to create a new connection (expired, stale, or none exists)
+      // First, clean up any existing connection
+      if (cached) {
         try {
-          http.close();
+          cached.http.close();
         } catch (e) {
           // Ignore cleanup errors
         }
@@ -201,7 +217,7 @@ export function createAtlsFetch(options) {
 
       // Connect and perform aTLS handshake with policy
       http = await AtlsHttp.connect(wsUrl, sni, policy);
-      connectionCache.set(cacheKey, http);
+      connectionCache.set(cacheKey, { http, connectedAt: Date.now() });
 
       // Get attestation
       attestation = http.attestation();

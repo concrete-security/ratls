@@ -66,6 +66,30 @@ const debug = (...args) => {
   }
 }
 
+/**
+ * Default session TTL: 30 minutes in milliseconds.
+ */
+const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
+
+/**
+ * Get the configured session TTL in milliseconds.
+ * Priority: options.sessionTtlMinutes > ATLS_SESSION_TTL_MINUTES env > default (30 min)
+ * @param {number|undefined} optionsTtl - TTL in minutes from options
+ * @returns {number} TTL in milliseconds
+ */
+function getSessionTTLMs(optionsTtl) {
+  if (optionsTtl !== undefined) {
+    return optionsTtl * 60 * 1000
+  }
+  if (process.env.ATLS_SESSION_TTL_MINUTES) {
+    const minutes = parseFloat(process.env.ATLS_SESSION_TTL_MINUTES)
+    if (!isNaN(minutes) && minutes > 0) {
+      return minutes * 60 * 1000
+    }
+  }
+  return DEFAULT_SESSION_TTL_MS
+}
+
 const require = createRequire(import.meta.url)
 const {
   atlsConnect,
@@ -251,8 +275,11 @@ export function createAtlsAgent(options) {
   const effectiveServerName = options.serverName || parsed.serverName
   const onAttestation = options.onAttestation
 
-  // Extract agent-specific options
-  const { target, serverName, onAttestation: _, policy: __, ...agentOptions } = options
+  // Extract agent-specific options (including sessionTtlMinutes)
+  const { target, serverName, onAttestation: _, policy: __, sessionTtlMinutes, ...agentOptions } = options
+
+  // Calculate freeSocketTimeout from session TTL
+  const freeSocketTimeout = getSessionTTLMs(sessionTtlMinutes)
 
   class AtlsAgent extends Agent {
     createConnection(connectOptions, callback) {
@@ -278,6 +305,7 @@ export function createAtlsAgent(options) {
 
   return new AtlsAgent({
     keepAlive: true,
+    freeSocketTimeout,
     ...agentOptions,
   })
 }
