@@ -9,7 +9,7 @@ use dcap_qvl::verify::{verify, VerifiedReport};
 use dcap_qvl::QuoteCollateralV3;
 use dstack_sdk_types::dstack::{EventLog, GetQuoteResponse};
 use log::{debug, warn};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 use crate::dstack::compose_hash::get_compose_hash;
 use crate::dstack::config::DstackTDXVerifierConfig;
@@ -454,16 +454,23 @@ impl DstackTDXVerifier {
         Ok(())
     }
 
-    /// Verify report data (nonce) matches what we sent.
+    /// Verify report data (nonce + session EKM) against the verified report.
     ///
-    /// This prevents replay attacks by ensuring the quote was generated
-    /// specifically for this verification request.
+    /// This prevents replay and relay attacks by ensuring the quote was generated specifically
+    /// for this verification request, within the current TLS session (identified by EKM).
     fn verify_report_data(
         &self,
-        report_data: &[u8; 64],
+        nonce: &[u8; 32],
+        session_ekm: &[u8; 32],
         verified_report: &VerifiedReport,
     ) -> Result<(), AtlsVerificationError> {
-        debug!("Verifying report data (nonce) against verified report");
+        debug!("Verifying report data against verified report");
+
+        // Compute report_data = SHA512(nonce || session_ekm)
+        let mut hasher = Sha512::new();
+        hasher.update(nonce);
+        hasher.update(session_ekm);
+        let report_data: [u8; 64] = hasher.finalize().into();
 
         // Get the trusted TD report from DCAP verification
         let td_report = verified_report.report.as_td10().ok_or_else(|| {
@@ -478,6 +485,7 @@ impl DstackTDXVerifier {
         debug!("Report data expected: {}", expected);
         debug!("Report data actual:   {}", actual);
 
+        
         if expected != actual {
             return Err(AtlsVerificationError::ReportDataMismatch { expected, actual });
         }
@@ -492,6 +500,7 @@ impl AtlsVerifier for DstackTDXVerifier {
         &self,
         stream: &mut S,
         peer_cert: &[u8],
+        session_ekm: &[u8],
         hostname: &str,
     ) -> Result<Report, AtlsVerificationError>
     where
@@ -500,9 +509,11 @@ impl AtlsVerifier for DstackTDXVerifier {
         debug!("Starting DStack TDX verification for {}", hostname);
 
         // 1. Generate nonce and get quote via HTTP POST to /tdx_quote
-        let mut report_data = [0u8; 64];
-        rand::Rng::fill(&mut rand::thread_rng(), &mut report_data);
-        let quote_response = get_quote_over_http(stream, &report_data, hostname).await?;
+        let mut nonce = [0u8; 32];
+        rand::Rng::fill(&mut rand::thread_rng(), &mut nonce);
+
+        // Get quote via HTTP POST to /tdx_quote
+        let quote_response = get_quote_over_http(stream, &nonce, hostname).await?;
 
         // 2. Parse event log using dstack-sdk-types
         debug!("Parsing event log");
@@ -528,8 +539,13 @@ impl AtlsVerifier for DstackTDXVerifier {
         // Async quote verification - no blocking!
         let verified_report = self.verify_quote(&quote_bytes).await?;
 
-        // 5. Verify report data (nonce) matches what we sent
-        self.verify_report_data(&report_data, &verified_report)?;
+        // 5. Verify report data
+        let session_ekm: &[u8; 32] = session_ekm.try_into().map_err(|_| {
+            AtlsVerificationError::Configuration(
+                "session_ekm must be exactly 32 bytes".into(),
+            )
+        })?;
+        self.verify_report_data(&nonce, session_ekm, &verified_report)?;
 
         // 6. Verify RTMR replay against the verified report
         self.verify_rtmr_replay(&quote_response, &verified_report)?;
@@ -557,7 +573,7 @@ impl AtlsVerifier for DstackTDXVerifier {
 /// Fetch quote over HTTP from /tdx_quote endpoint (async version).
 async fn get_quote_over_http<S>(
     stream: &mut S,
-    report_data: &[u8; 64],
+    nonce: &[u8; 32],
     hostname: &str,
 ) -> Result<GetQuoteResponse, AtlsVerificationError>
 where
@@ -565,9 +581,9 @@ where
 {
     debug!("Sending POST /tdx_quote request to {}", hostname);
 
-    // Build HTTP POST request for the /tdx_quote endpoint
+    // Build HTTP POST request for the /tdx_quote endpoint with EKM binding
     let body = serde_json::json!({
-        "report_data_hex": hex::encode(report_data)
+        "nonce_hex": hex::encode(nonce)
     });
     let body_str = body.to_string();
 

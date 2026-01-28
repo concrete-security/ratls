@@ -24,10 +24,11 @@ pub use futures_rustls::client::TlsStream;
 #[cfg(target_arch = "wasm32")]
 use futures_rustls::TlsConnector;
 
-/// Perform TLS handshake and return stream with peer certificate.
+/// Perform TLS handshake and return stream with peer certificate and session EKM.
 ///
 /// This establishes a TLS connection using CA-verified certificates from
-/// the webpki-roots bundle and captures the server's leaf certificate.
+/// the webpki-roots bundle and captures the server's leaf certificate and
+/// TLS session Exported Keying Material (EKM) for session binding.
 ///
 /// # Arguments
 ///
@@ -37,12 +38,12 @@ use futures_rustls::TlsConnector;
 ///
 /// # Returns
 ///
-/// A tuple of (TlsStream, peer_certificate_der) on success.
+/// A tuple of (TlsStream, peer_certificate_der, session_ekm) on success.
 pub async fn tls_handshake<S>(
     stream: S,
     server_name: &str,
     alpn: Option<Vec<String>>,
-) -> Result<(TlsStream<S>, Vec<u8>), AtlsVerificationError>
+) -> Result<(TlsStream<S>, Vec<u8>, Vec<u8>), AtlsVerificationError>
 where
     S: AsyncByteStream + 'static,
 {
@@ -81,7 +82,16 @@ where
         peer_cert.len()
     );
 
-    Ok((tls_stream, peer_cert))
+    // Extract EKM for session binding (RFC 9266)
+    let mut session_ekm = vec![0u8; 32];
+    conn.export_keying_material(&mut session_ekm, b"EXPORTER-Channel-Binding", None)
+        .map_err(|e| {
+            AtlsVerificationError::TlsHandshake(format!("Failed to extract session EKM: {}", e))
+        })?;
+
+    debug!("Session EKM extracted ({} bytes)", session_ekm.len());
+
+    Ok((tls_stream, peer_cert, session_ekm))
 }
 
 /// Establish a TLS connection with attestation verification.
@@ -133,12 +143,12 @@ where
     // Initialize logging (idempotent, only runs once)
     crate::logging::init();
 
-    let (mut tls_stream, peer_cert) = tls_handshake(stream, server_name, alpn).await?;
+    let (mut tls_stream, peer_cert, session_ekm) = tls_handshake(stream, server_name, alpn).await?;
 
     debug!("Starting attestation verification");
     let verifier = policy.into_verifier()?;
     let report = verifier
-        .verify(&mut tls_stream, &peer_cert, server_name)
+        .verify(&mut tls_stream, &peer_cert, &session_ekm, server_name)
         .await?;
 
     debug!("Attestation verification successful");

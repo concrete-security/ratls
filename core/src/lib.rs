@@ -70,7 +70,8 @@
 //! // Use the verifier with a TLS stream (async)
 //! # let mut tls_stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream> = todo!();
 //! # let peer_cert: Vec<u8> = todo!();
-//! let report = verifier.verify(&mut tls_stream, &peer_cert, "hostname").await?;
+//! # let session_ekm: Vec<u8> = todo!();
+//! let report = verifier.verify(&mut tls_stream, &peer_cert, &session_ekm, "hostname").await?;
 //! match &report {
 //!     atls_core::Report::Tdx(tdx_report) => {
 //!         println!("TCB Status: {}", tdx_report.status);

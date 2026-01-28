@@ -33,7 +33,7 @@ const VLLM_POLICY = {
   os_image_hash: "86b181377635db21c415f9ece8cc8505f7d4936ad3be7043969005a8c4690c1a",
   app_compose: mergeWithDefaultAppCompose({
     docker_compose_file: VLLM_DOCKER_COMPOSE,
-    allowed_envs: ["AUTH_SERVICE_TOKEN"]
+    allowed_envs: ["EKM_SHARED_SECRET", "AUTH_SERVICE_TOKEN"]
   }),
   allowed_tcb_status: ["UpToDate", "SWHardeningNeeded"]
 }

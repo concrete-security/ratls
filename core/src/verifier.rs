@@ -88,6 +88,7 @@ pub trait AtlsVerifier: Send + Sync {
         &self,
         stream: &mut S,
         peer_cert: &[u8],
+        session_ekm: &[u8],
         hostname: &str,
     ) -> impl Future<Output = Result<Report, AtlsVerificationError>> + Send
     where
@@ -102,6 +103,7 @@ pub trait AtlsVerifier: Sync {
         &self,
         stream: &mut S,
         peer_cert: &[u8],
+        session_ekm: &[u8],
         hostname: &str,
     ) -> impl Future<Output = Result<Report, AtlsVerificationError>>
     where
@@ -160,6 +162,7 @@ impl AtlsVerifier for Verifier {
         &self,
         stream: &mut S,
         peer_cert: &[u8],
+        session_ekm: &[u8],
         hostname: &str,
     ) -> impl Future<Output = Result<Report, AtlsVerificationError>> + Send
     where
@@ -167,7 +170,7 @@ impl AtlsVerifier for Verifier {
     {
         async move {
             match self {
-                Verifier::DstackTdx(v) => v.verify(stream, peer_cert, hostname).await,
+                Verifier::DstackTdx(v) => v.verify(stream, peer_cert, session_ekm, hostname).await,
             }
         }
     }
@@ -179,6 +182,7 @@ impl AtlsVerifier for Verifier {
         &self,
         stream: &mut S,
         peer_cert: &[u8],
+        session_ekm: &[u8],
         hostname: &str,
     ) -> impl Future<Output = Result<Report, AtlsVerificationError>>
     where
@@ -186,7 +190,7 @@ impl AtlsVerifier for Verifier {
     {
         async move {
             match self {
-                Verifier::DstackTdx(v) => v.verify(stream, peer_cert, hostname).await,
+                Verifier::DstackTdx(v) => v.verify(stream, peer_cert, session_ekm, hostname).await,
             }
         }
     }
