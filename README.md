@@ -135,21 +135,58 @@ Verification flow with a policy:
 
 ---
 
-# 5. Protocol Specification
+# 5. Security Features
+
+## Session Binding via EKM
+
+aTLS binds attestations to specific TLS sessions using **Exported Keying Material (EKM)** per [RFC 5705](https://datatracker.ietf.org/doc/html/rfc5705) (see also [RFC 8446 Section 7.5](https://datatracker.ietf.org/doc/html/rfc8446#section-7.5)) and [RFC 9266](https://datatracker.ietf.org/doc/html/rfc9266). This prevents attestation relay attacks where an attacker with a compromised private key could relay attestations across different TLS sessions.
+
+### How It Works
+
+1. After the TLS handshake completes, both client and server extract a 32-byte session-specific EKM using the label `"EXPORTER-Channel-Binding"`.
+2. The client generates a random 32-byte nonce for freshness.
+3. Both parties compute `report_data = SHA512(nonce || session_ekm)`.
+4. The server generates a TDX quote with this computed `report_data`.
+5. The client verifies the quote, ensuring the `report_data` matches its own computation.
+
+Since the EKM is derived from the TLS session's master secret (unique per session), each attestation is cryptographically bound to its specific TLS connection. An attacker cannot relay an attestation from one session to another, even with access to the private key.
+
+**Key Properties:**
+- **Always enabled** - No configuration needed
+- **Transparent** - Works automatically with all aTLS connections
+- **Standards-based** - Uses RFC 9266 channel binding for TLS 1.3
+- **Defense-in-depth** - Protects against key compromise scenarios
+
+---
+
+# 6. Protocol Specification
 
 ### Step 1: TLS Handshake
 - TLS 1.3 with a promiscuous verifier. The certificate is accepted temporarily and recorded.
 
-### Step 2: Quote Retrieval
+### Step 2: EKM Extraction & Quote Retrieval
+After TLS handshake, both client and server extract session EKM:
+```rust
+session_ekm = export_keying_material(32, "EXPORTER-Channel-Binding", None)
+```
+
+Client generates a 32-byte nonce and computes expected report_data:
+```rust
+nonce = random_bytes(32)
+report_data = SHA512(nonce || session_ekm)
+```
+
 Client sends an HTTP POST over the established TLS channel:
 ```http
 POST /tdx_quote HTTP/1.1
 Host: localhost
 Content-Type: application/json
 {
-  "report_data": "<hex_nonce>"
+  "nonce_hex": "<hex_nonce>"
 }
 ```
+
+Server extracts its own session EKM, computes the same `report_data = SHA512(nonce || server_ekm)`, and generates a quote with that report_data.
 
 Server responds:
 ```json
@@ -165,7 +202,7 @@ Server responds:
 
 ### Step 3: Verification
 1. Validate the quote signature using Intel PCCS collateral (`dcap-qvl` flow).
-2. Ensure `report_data` equals the client nonce (freshness).
+2. Ensure `report_data` in the quote equals `SHA512(nonce || session_ekm)` (session binding + freshness).
 3. Recompute RTMR3 by replaying every event log entry in order and ensure the final digest matches the quote.
 4. During that replay, locate the TLS key binding event (contains the certificate pubkey hash) to prove the attested workload owns the negotiated TLS key.
 

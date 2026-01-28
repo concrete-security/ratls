@@ -131,10 +131,10 @@ mod integration {
         let _ = default_provider().install_default();
     }
 
-    /// Establish an async TLS connection and return the stream and peer certificate.
+    /// Establish an async TLS connection and return the stream, peer certificate, and session EKM.
     async fn connect_tls(
         host: &str,
-    ) -> Result<(tokio_rustls::client::TlsStream<TcpStream>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(tokio_rustls::client::TlsStream<TcpStream>, Vec<u8>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
         // Ensure crypto provider is installed
         ensure_crypto_provider();
 
@@ -155,7 +155,7 @@ mod integration {
         // Complete TLS handshake
         let stream = connector.connect(server_name.to_owned(), tcp_stream).await?;
 
-        // Get peer certificate from the connection
+        // Get peer certificate and extract session EKM
         let (_, conn) = stream.get_ref();
         let peer_cert = conn
             .peer_certificates()
@@ -163,7 +163,12 @@ mod integration {
             .map(|cert| cert.as_ref().to_vec())
             .ok_or("No peer certificate found")?;
 
-        Ok((stream, peer_cert))
+        // Extract session EKM for session binding (RFC 9266)
+        let mut session_ekm = vec![0u8; 32];
+        conn.export_keying_material(&mut session_ekm, b"EXPORTER-Channel-Binding", None)
+            .map_err(|e| format!("Failed to extract session EKM: {}", e))?;
+
+        Ok((stream, peer_cert, session_ekm))
     }
 
     /// Test verifier with runtime verification disabled.
@@ -179,9 +184,9 @@ mod integration {
             .build()
             .expect("Failed to build verifier");
 
-        let (mut stream, peer_cert) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
+        let (mut stream, peer_cert, session_ekm) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
 
-        let result = verifier.verify(&mut stream, &peer_cert, TEST_HOST).await;
+        let result = verifier.verify(&mut stream, &peer_cert, &session_ekm, TEST_HOST).await;
 
         assert!(
             result.is_ok(),
@@ -206,7 +211,7 @@ mod integration {
         // We won't actually verify it matches since we don't know the exact compose
         let mut app_compose = get_default_app_compose();
         app_compose["docker_compose_file"] = json!(get_vllm_docker_compose());
-        app_compose["allowed_envs"] = json!(["AUTH_SERVICE_TOKEN"]);
+        app_compose["allowed_envs"] = json!(["EKM_SHARED_SECRET", "AUTH_SERVICE_TOKEN"]);
 
         let verifier = DstackTDXVerifierBuilder::new()
             .expected_bootchain(test_bootchain())
@@ -219,9 +224,9 @@ mod integration {
             .build()
             .expect("Failed to build verifier");
 
-        let (mut stream, peer_cert) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
+        let (mut stream, peer_cert, session_ekm) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
 
-        let result = verifier.verify(&mut stream, &peer_cert, TEST_HOST).await;
+        let result = verifier.verify(&mut stream, &peer_cert, &session_ekm, TEST_HOST).await;
 
         // This might fail if app_compose doesn't match - that's expected
         // The important thing is that the verifier runs the full verification
@@ -263,9 +268,9 @@ mod integration {
             .build()
             .expect("Failed to build verifier");
 
-        let (mut stream, peer_cert) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
+        let (mut stream, peer_cert, session_ekm) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
 
-        let result = verifier.verify(&mut stream, &peer_cert, TEST_HOST).await;
+        let result = verifier.verify(&mut stream, &peer_cert, &session_ekm, TEST_HOST).await;
 
         assert!(
             matches!(result, Err(AtlsVerificationError::BootchainMismatch { .. })),
@@ -298,9 +303,9 @@ mod integration {
             .build()
             .expect("Failed to build verifier");
 
-        let (mut stream, peer_cert) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
+        let (mut stream, peer_cert, session_ekm) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS");
 
-        let result = verifier.verify(&mut stream, &peer_cert, TEST_HOST).await;
+        let result = verifier.verify(&mut stream, &peer_cert, &session_ekm, TEST_HOST).await;
 
         // The verifier should fail with either AppComposeHashMismatch (if compose doesn't match)
         // or OsImageHashMismatch (if compose matches but OS hash doesn't)
@@ -331,13 +336,13 @@ mod integration {
             .expect("Failed to build verifier");
 
         // First verification
-        let (mut stream1, peer_cert1) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (1)");
-        let result1 = verifier.verify(&mut stream1, &peer_cert1, TEST_HOST).await;
+        let (mut stream1, peer_cert1, session_ekm1) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (1)");
+        let result1 = verifier.verify(&mut stream1, &peer_cert1, &session_ekm1, TEST_HOST).await;
         assert!(result1.is_ok(), "First verification failed: {:?}", result1.err());
 
         // Second verification (should use cached collateral)
-        let (mut stream2, peer_cert2) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (2)");
-        let result2 = verifier.verify(&mut stream2, &peer_cert2, TEST_HOST).await;
+        let (mut stream2, peer_cert2, session_ekm2) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (2)");
+        let result2 = verifier.verify(&mut stream2, &peer_cert2, &session_ekm2, TEST_HOST).await;
         assert!(result2.is_ok(), "Second verification failed: {:?}", result2.err());
 
         println!("Multiple verifications with same verifier instance passed!");
@@ -357,13 +362,13 @@ mod integration {
             .expect("Failed to build verifier");
 
         // First verification - fetches collateral from PCCS
-        let (mut stream1, peer_cert1) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (1)");
-        let result1 = verifier.verify(&mut stream1, &peer_cert1, TEST_HOST).await;
+        let (mut stream1, peer_cert1, session_ekm1) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (1)");
+        let result1 = verifier.verify(&mut stream1, &peer_cert1, &session_ekm1, TEST_HOST).await;
         assert!(result1.is_ok(), "First verification failed: {:?}", result1.err());
 
         // Second verification - uses cached collateral
-        let (mut stream2, peer_cert2) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (2)");
-        let result2 = verifier.verify(&mut stream2, &peer_cert2, TEST_HOST).await;
+        let (mut stream2, peer_cert2, session_ekm2) = connect_tls(TEST_HOST).await.expect("Failed to connect TLS (2)");
+        let result2 = verifier.verify(&mut stream2, &peer_cert2, &session_ekm2, TEST_HOST).await;
         assert!(result2.is_ok(), "Second verification (cached) failed: {:?}", result2.err());
 
         println!("Collateral caching test passed!");
@@ -390,8 +395,8 @@ mod integration {
 
         // Run the async verification using block_on
         let result = rt.block_on(async {
-            let (mut stream, peer_cert) = connect_tls(TEST_HOST).await?;
-            verifier.verify(&mut stream, &peer_cert, TEST_HOST).await
+            let (mut stream, peer_cert, session_ekm) = connect_tls(TEST_HOST).await?;
+            verifier.verify(&mut stream, &peer_cert, &session_ekm, TEST_HOST).await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         });
 
@@ -413,6 +418,7 @@ mod integration {
 
         let mut app_compose = get_default_app_compose();
         app_compose["docker_compose_file"] = json!(get_vllm_docker_compose());
+        app_compose["allowed_envs"] = json!(["EKM_SHARED_SECRET", "AUTH_SERVICE_TOKEN"]);
 
         let policy = atls_core::Policy::DstackTdx(atls_core::DstackTdxPolicy {
             expected_bootchain: Some(test_bootchain()),
@@ -436,13 +442,6 @@ mod integration {
                     }
                 }
             }
-            Err(atls_core::AtlsVerificationError::AppComposeHashMismatch { expected, actual }) => {
-                println!(
-                    "App compose hash mismatch (expected if it is out of date):\n  Expected: {}\n  Actual: {}",
-                    expected, actual
-                );
-                // This is acceptable - the bootchain verification passed
-            }
             Err(e) => {
                 panic!("Unexpected verification error: {:?}", e);
             }
@@ -458,6 +457,7 @@ mod integration {
 
         let mut app_compose = get_default_app_compose();
         app_compose["docker_compose_file"] = json!(get_vllm_docker_compose());
+        app_compose["allowed_envs"] = json!(["EKM_SHARED_SECRET", "AUTH_SERVICE_TOKEN"]);
 
         let policy = atls_core::Policy::DstackTdx(atls_core::DstackTdxPolicy {
             expected_bootchain: Some(test_bootchain()),
@@ -485,12 +485,6 @@ mod integration {
                     }
                 }
             }
-            Err(atls_core::AtlsVerificationError::AppComposeHashMismatch { expected, actual }) => {
-                println!(
-                    "App compose hash mismatch (expected if it is out of date):\n  Expected: {}\n  Actual: {}",
-                    expected, actual
-                );
-            }
             Err(e) => {
                 panic!("Unexpected verification error: {:?}", e);
             }
@@ -512,8 +506,9 @@ mod integration {
             result.err()
         );
 
-        let (_, peer_cert) = result.unwrap();
+        let (_, peer_cert, session_ekm) = result.unwrap();
         assert!(!peer_cert.is_empty(), "Peer certificate should not be empty");
-        println!("tls_handshake passed! Cert size: {} bytes", peer_cert.len());
+        assert_eq!(session_ekm.len(), 32, "Session EKM should be 32 bytes");
+        println!("tls_handshake passed! Cert size: {} bytes, EKM: {} bytes", peer_cert.len(), session_ekm.len());
     }
 }
