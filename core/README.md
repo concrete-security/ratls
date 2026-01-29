@@ -1,4 +1,4 @@
-# atls-core
+# atlas-core
 
 Rust library for attested TLS (aTLS) verification. Verify that TLS servers are running inside Trusted Execution Environments (TEEs) like Intel TDX before sending sensitive data.
 
@@ -8,7 +8,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-atls-core = { git = "https://github.com/concrete-security/atlas", branch = "main" }
+atlas-core = { git = "https://github.com/concrete-security/atlas", branch = "main" }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 ```
@@ -20,7 +20,7 @@ serde_json = "1"
 For development and testing, use `DstackTdxPolicy::dev()` which accepts more TCB statuses but still verifies the TEE:
 
 ```rust
-use atls_core::{atls_connect, Policy, DstackTdxPolicy};
+use atlas_core::{atls_connect, Policy, DstackTdxPolicy};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Access attestation report
     match &report {
-        atls_core::Report::Tdx(tdx_report) => {
+        atlas_core::Report::Tdx(tdx_report) => {
             println!("TEE verified! TCB Status: {}", tdx_report.status);
         }
     }
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 For production, provide bootchain measurements and app configuration:
 
 ```rust
-use atls_core::{atls_connect, Policy, DstackTdxPolicy, ExpectedBootchain};
+use atlas_core::{atls_connect, Policy, DstackTdxPolicy, ExpectedBootchain};
 use serde_json::json;
 
 #[tokio::main]
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Policies can be loaded from JSON files:
 
 ```rust
-use atls_core::{atls_connect, Policy};
+use atlas_core::{atls_connect, Policy};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 For custom TLS handling, use the `AtlsVerifier` trait directly:
 
 ```rust
-use atls_core::{DstackTDXVerifier, AtlsVerifier, ExpectedBootchain};
+use atlas_core::{DstackTDXVerifier, AtlsVerifier, ExpectedBootchain};
 use serde_json::json;
 
 #[tokio::main]
@@ -175,7 +175,7 @@ Policy fields vary by verifier implementation. The `Policy` enum wraps implement
 | `cache_collateral` | Cache Intel collateral (default: false) | No |
 
 ```rust
-use atls_core::{Policy, DstackTdxPolicy, ExpectedBootchain};
+use atlas_core::{Policy, DstackTdxPolicy, ExpectedBootchain};
 use serde_json::json;
 
 // Development policy - explicitly disables runtime verification
@@ -207,7 +207,7 @@ let invalid_policy = Policy::DstackTdx(DstackTdxPolicy::default());
 ## Error Handling
 
 ```rust
-use atls_core::{atls_connect, Policy, DstackTdxPolicy, AtlsVerificationError};
+use atlas_core::{atls_connect, Policy, DstackTdxPolicy, AtlsVerificationError};
 
 async fn verify_tee() -> Result<(), AtlsVerificationError> {
     let tcp = tokio::net::TcpStream::connect("tee.example.com:443")
