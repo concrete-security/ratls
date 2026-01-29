@@ -16,7 +16,7 @@
     }
   },
   "napi": {
-    "name": "atls-node",
+    "name": "atlas-node",
     "package": {
       "name": "@concrete-security/atlas-node"
     },
@@ -62,7 +62,7 @@
     "prepublishOnly": "napi prepublish -t npm",
     "artifacts": "napi artifacts",
     "test": "node test.mjs",
-    "universal": "napi universal -t @atls-node"
+    "universal": "napi universal -t @atlas-node"
   },
   "devDependencies": {
     "@ai-sdk/openai": "^2.0.76",

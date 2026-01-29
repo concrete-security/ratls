@@ -37,7 +37,7 @@ Browsers lack raw TCP sockets and attestation primitives. The toolkit uses WebSo
 
 Example:
 ```javascript
-import { createAtlsFetch } from "atls-node";
+import { createAtlsFetch } from "atlas-node";
 
 const fetch = createAtlsFetch({
   target: "secure-enclave.com",
