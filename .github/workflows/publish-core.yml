@@ -51,7 +51,7 @@ jobs:
         run: cd target/package && echo "hash=$(sha256sum ./*.crate | base64 -w0)" >> "${GITHUB_OUTPUT}"
 
   provenance:
-    if: ${{ !inputs.dry_run  }}
+    if: ${{ !github.event_name == 'pull_request'  }}
     needs: [package]
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     permissions:
@@ -80,7 +80,7 @@ jobs:
       - name: Publish crate.io package
         env:
           CRATES_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          DRY_RUN: ${{ github.event_name == 'pull_request' && '--dry-run' || '' }}
         run: |
           cd ${{ env.CRATE_BASE_DIR }}
           # DRY_RUN expansion cannot be double quoted when variable contains empty string otherwise cargo publish 
@@ -89,7 +89,7 @@ jobs:
           cargo publish --token "${CRATES_TOKEN}" ${DRY_RUN}
 
       - name: Create draft release
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -108,12 +108,12 @@ jobs:
             target/package/*.crate
 
       - name: Generate hash
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !github.event_name == 'pull_request' }}
         id: published_hash
         run: cd target/package && echo "pub_hash=$(sha256sum ./*.crate | base64 -w0)" >> "${GITHUB_OUTPUT}"
 
       - name: Compare hashes
-        if: ${{ !inputs.dry_run && needs.package.outputs.hash != steps.published_hash.outputs.pub_hash }}
+        if: ${{ !github.event_name == 'pull_request' && needs.package.outputs.hash != steps.published_hash.outputs.pub_hash }}
         run: |
           echo "ERROR: Published crate hash does not match the packaged crate hash!"
           exit 1

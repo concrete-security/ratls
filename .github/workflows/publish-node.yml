@@ -148,7 +148,7 @@ jobs:
         run: ls -la npm/
 
       - name: Dry run
-        if: ${{ inputs.dry_run }}
+        if: ${{ github.event_name == 'pull_request' }}
         run: |
           echo "Dry run - would publish:"
           for dir in npm/*/; do
@@ -159,7 +159,7 @@ jobs:
           cat package.json | grep -E '"name"|"version"'
 
       - name: Publish to npm
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !github.event_name == 'pull_request' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -167,7 +167,7 @@ jobs:
           npm publish --access public
 
       - name: Create draft release
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
