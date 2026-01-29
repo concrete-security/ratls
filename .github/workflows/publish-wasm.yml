@@ -21,6 +21,10 @@ on:
         type: boolean
         default: true
 
+  pull_request:
+    branches:
+      - main
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest

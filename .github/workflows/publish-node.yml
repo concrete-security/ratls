@@ -21,6 +21,10 @@ on:
         type: boolean
         default: true
 
+  pull_request:
+    branches:
+      - main
+
 env:
   MACOSX_DEPLOYMENT_TARGET: '10.13'
   CARGO_INCREMENTAL: 0
