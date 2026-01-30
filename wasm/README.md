@@ -7,7 +7,7 @@ WASM bindings for aTLS attested connections. The module performs TLS 1.3 inside 
 The WASM module handles **attested TLS + HTTP/1.1 protocol** (including chunked transfer encoding for streaming LLM responses).
 
 ```
-Browser (atls-fetch.js)          WASM (atls_wasm)           Proxy              TEE
+Browser (atls-fetch.js)          WASM (atlas_wasm)           Proxy              TEE
         │                               │                       │                  │
         │──── AtlsHttp.connect ───────►│                       │                  │
         │                               │──── WebSocket ───────►│                  │
@@ -67,7 +67,7 @@ console.log(response.attestation); // { trusted: true, teeType: "Tdx", ... }
 HTTP client with streaming body support:
 
 ```javascript
-import init, { AtlsHttp } from "./pkg/atls_wasm.js";
+import init, { AtlsHttp } from "./pkg/atlas_wasm.js";
 
 await init();
 
@@ -93,7 +93,7 @@ const reader = result.body.getReader();
 Direct access to the raw attested TLS stream (no HTTP handling):
 
 ```javascript
-import init, { AttestedStream } from "./pkg/atls_wasm.js";
+import init, { AttestedStream } from "./pkg/atlas_wasm.js";
 
 await init();
 
@@ -118,7 +118,7 @@ The `proxy/` directory contains a WebSocket-to-TCP forwarder:
 export ATLS_PROXY_ALLOWLIST="vllm.example.com:443,other.tee.com:443"
 export ATLS_PROXY_LISTEN="127.0.0.1:9000"
 
-cargo run -p atls-proxy
+cargo run -p atlas-proxy
 ```
 
 The proxy just forwards bytes - it doesn't terminate TLS. All encryption and attestation verification happens in the browser.

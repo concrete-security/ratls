@@ -1,4 +1,17 @@
-name: Publish aTLS Core Crate
+# Publish atlas-core to crates.io
+#
+# How to release:
+#   1. Update version in core/Cargo.toml
+#   2. Commit and push the change
+#   3. Run this workflow with dry_run=false
+#
+# The workflow will:
+#   - Package the crate
+#   - Create git tag: core/<version>
+#   - Create draft GitHub release
+#   - Publish to crates.io
+
+name: Publish Atlas Core Crate
 
 on:
   workflow_dispatch:
@@ -7,6 +20,10 @@ on:
         description: 'Dry run (skip cargo publish)'
         type: boolean
         default: true
+
+  pull_request:
+    branches:
+      - main
 
 env:
   CRATE_BASE_DIR: ${{ github.workspace }}/core
@@ -27,14 +44,14 @@ jobs:
           cargo package
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: atls-core-crate
+          name: atlas-core-crate
           path: target/package/*.crate
       - name: generate hash
         id: hash
         run: cd target/package && echo "hash=$(sha256sum ./*.crate | base64 -w0)" >> "${GITHUB_OUTPUT}"
 
   provenance:
-    if: ${{ !inputs.dry_run  }}
+    if: ${{ !github.event_name == 'pull_request'  }}
     needs: [package]
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     permissions:
@@ -63,7 +80,7 @@ jobs:
       - name: Publish crate.io package
         env:
           CRATES_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          DRY_RUN: ${{ github.event_name == 'pull_request' && '--dry-run' || '' }}
         run: |
           cd ${{ env.CRATE_BASE_DIR }}
           # DRY_RUN expansion cannot be double quoted when variable contains empty string otherwise cargo publish 
@@ -72,11 +89,12 @@ jobs:
           cargo publish --token "${CRATES_TOKEN}" ${DRY_RUN}
 
       - name: Create draft release
+        if: ${{ !github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(grep '^version = ' core/Cargo.toml | cut -d '"' -f2)
-          export VERSION
-          TAG="atls-core-v${VERSION}"
-          export TAG
+          TAG="core/${VERSION}"
           echo "version: ${VERSION}"
           echo "tag: ${TAG}"
 
@@ -84,18 +102,18 @@ jobs:
           git push origin "${TAG}"
 
           gh release create --draft --repo ${{ github.repository }} \
-          --verify-tag "${TAG}" \
-          --title "${TAG}" \
-          target/package/*.crate
-        env:
-          GH_TOKEN: ${{ github.token }}
+            --verify-tag "${TAG}" \
+            --title "atlas-core v${VERSION}" \
+            --notes "Published atlas-core@${VERSION} to crates.io" \
+            target/package/*.crate
 
       - name: Generate hash
+        if: ${{ !github.event_name == 'pull_request' }}
         id: published_hash
         run: cd target/package && echo "pub_hash=$(sha256sum ./*.crate | base64 -w0)" >> "${GITHUB_OUTPUT}"
 
       - name: Compare hashes
-        if: ${{ needs.package.outputs.hash != steps.published_hash.outputs.pub_hash }}
+        if: ${{ !github.event_name == 'pull_request' && needs.package.outputs.hash != steps.published_hash.outputs.pub_hash }}
         run: |
           echo "ERROR: Published crate hash does not match the packaged crate hash!"
           exit 1

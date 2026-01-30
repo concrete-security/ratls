@@ -19,7 +19,7 @@ Browsers lack raw TCP sockets and attestation primitives. The toolkit uses WebSo
 
 1. **Handshake:** WASM client completes TLS 1.3 over a WebSocket connection.
 2. **Quote Fetch:** Client issues an HTTP request to fetch the hardware quote.
-3. **Verification:** `atls-core` validates the quote against the TLS certificate and user policy.
+3. **Verification:** `atlas-core` validates the quote against the TLS certificate and user policy.
 
 ---
 
@@ -37,7 +37,7 @@ Browsers lack raw TCP sockets and attestation primitives. The toolkit uses WebSo
 
 Example:
 ```javascript
-import { createAtlsFetch } from "atls-node";
+import { createAtlsFetch } from "atlas-node";
 
 const fetch = createAtlsFetch({
   target: "secure-enclave.com",
@@ -94,7 +94,7 @@ console.log(response.attestation); // { trusted: true, teeType: "Tdx", ... }
 
 # 4. Policy Configuration
 
-Policies describe what constitutes an acceptable attestation. The `atls-core` API (and each binding) consumes a `Policy` enum with the following shape:
+Policies describe what constitutes an acceptable attestation. The `atlas-core` API (and each binding) consumes a `Policy` enum with the following shape:
 
 ```json
 {

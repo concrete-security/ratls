@@ -18,7 +18,7 @@ The proxy enforces an allowlist of permitted target hosts/ports to prevent SSRF 
 
 Example:
 ```bash
-ATLS_PROXY_ALLOWLIST="vllm.concrete-security.com:443,192.168.1.100:8443" ./atls-proxy
+ATLS_PROXY_ALLOWLIST="vllm.concrete-security.com:443,192.168.1.100:8443" ./atlas-proxy
 ```
 
 ## Requirements
